@@ -16,9 +16,9 @@ import (
 // Manager is a thread-safe scope rule manager backed by a RuleStore.
 // It maintains a compiled Matcher that is atomically swapped on every mutation.
 type Manager struct {
-	mu    sync.Mutex
-	store RuleStore
-	rules []Rule
+	mu      sync.Mutex
+	store   RuleStore
+	rules   []Rule
 	matcher atomic.Pointer[Matcher]
 }
 
@@ -136,6 +136,16 @@ func (m *Manager) SetEnabled(ctx context.Context, id string, enabled bool) error
 	m.mu.Unlock()
 	m.rebuild()
 	return nil
+}
+
+// ReplaceRules replaces all scope rules in-memory (no store I/O).
+// Used by project load to swap the active ruleset.
+func (m *Manager) ReplaceRules(rules []Rule) {
+	m.mu.Lock()
+	m.rules = make([]Rule, len(rules))
+	copy(m.rules, rules)
+	m.mu.Unlock()
+	m.rebuild()
 }
 
 // Evaluate returns true if the URL is explicitly in scope.

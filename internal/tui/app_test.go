@@ -2,9 +2,9 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
-
 	tea "charm.land/bubbletea/v2"
 
 	"ouroboros/internal/model"
@@ -351,5 +351,99 @@ func TestGlobalImportFromHistoryWithScopeOpen(t *testing.T) {
 	}
 	if rules[0].Pattern != "import2.example.com" {
 		t.Fatalf("rule pattern = %q, want import2.example.com", rules[0].Pattern)
+	}
+}
+
+func TestColonCommandSaveLoadProject(t *testing.T) {
+	// Use temp HOME so projects go to a temp dir.
+	t.Setenv("HOME", t.TempDir())
+
+	st := store.NewMemoryStore()
+	sc := scope.NewManager(st)
+	_, _ = sc.AddRule(context.Background(), scope.Rule{
+		Kind: scope.RuleKindHost, Pattern: "test.example.com",
+		MatchMode: scope.MatchModeLiteral, Action: scope.ActionInclude,
+		Enabled: true, Priority: 10,
+	})
+	app := NewAppModel(st, nil, sc)
+
+	// Type :w myproject and press enter.
+	app.Update(appKey(":"))
+	if !app.commandMode {
+		t.Fatal("colon should enter command mode")
+	}
+	app.commandInput.SetValue("w myproject")
+	updated, _ := app.Update(appKey("enter"))
+	app = updated.(*AppModel)
+	if app.commandMode {
+		t.Fatal("enter should exit command mode")
+	}
+	if app.activeProject != "myproject" {
+		t.Fatalf("activeProject = %q, want myproject", app.activeProject)
+	}
+
+	// Parse the saved file back.
+	loaded, err := app.projectStore.Load("myproject")
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].Pattern != "test.example.com" {
+		t.Fatalf("loaded rules = %+v", loaded)
+	}
+
+	// Clear rules, then load project with :e.
+	sc.ReplaceRules(nil)
+	if len(sc.Rules()) != 0 {
+		t.Fatal("expected 0 rules after clear")
+	}
+	app.Update(appKey(":"))
+	app.commandInput.SetValue("e myproject")
+	updated, _ = app.Update(appKey("enter"))
+	app = updated.(*AppModel)
+	rules := sc.Rules()
+	if len(rules) != 1 || rules[0].Pattern != "test.example.com" {
+		t.Fatalf("rules after :e = %+v", rules)
+	}
+}
+
+func TestColonCommandLsProjects(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	st := store.NewMemoryStore()
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// Save two projects.
+	app.Update(appKey(":"))
+	app.commandInput.SetValue("w alpha")
+	app.Update(appKey("enter"))
+	app.Update(appKey(":"))
+	app.commandInput.SetValue("w beta")
+	app.Update(appKey("enter"))
+
+	// List projects.
+	app.Update(appKey(":"))
+	app.commandInput.SetValue("ls")
+	updated, _ := app.Update(appKey("enter"))
+	app = updated.(*AppModel)
+	if !strings.Contains(app.activeProject, "alpha") || !strings.Contains(app.activeProject, "beta") {
+		t.Fatalf("ls result = %q, want alpha and beta", app.activeProject)
+	}
+}
+
+func TestColonCommandQuit(t *testing.T) {
+	st := store.NewMemoryStore()
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	app.Update(appKey(":"))
+	app.commandInput.SetValue("q")
+	updated, cmd := app.Update(appKey("enter"))
+	app = updated.(*AppModel)
+	if !app.quitting {
+		t.Fatal(":q should set quitting=true")
+	}
+	if cmd == nil {
+		t.Fatal(":q should return tea.Quit command")
 	}
 }

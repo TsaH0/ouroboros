@@ -9,11 +9,14 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"ouroboros/internal/llm"
 	"ouroboros/internal/model"
 	"ouroboros/internal/msg"
+	"ouroboros/internal/project"
 	"ouroboros/internal/proxy"
 	"ouroboros/internal/recon"
 	"ouroboros/internal/repeater"
@@ -41,6 +44,10 @@ type AppModel struct {
 	height                 int
 	ready                  bool
 	viewSeq                uint64
+	commandMode            bool
+	commandInput           textinput.Model
+	projectStore           *project.Store
+	activeProject          string
 }
 
 // SetAnalyzer sets the LLM analyzer (called from main after provider config).
@@ -82,13 +89,30 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyPressMsg:
-		// Ctrl+c is the only unconditional quit key. The q key belongs to
-		// the focused view everywhere except the history root.
+		// Ctrl+c is the only unconditional quit key.
 		if key.Matches(v, key.NewBinding(key.WithKeys("ctrl+c"))) {
 			m.quitting = true
 			return m, tea.Quit
 		}
-		// Global view-opening shortcuts (0/4/5) work from any pane
+
+		// Command mode: route all keys to the command input.
+		if m.commandMode {
+			return m.handleCommandKey(v)
+		}
+
+		// Enter command mode with ':' (unless focused pane is editing).
+		if key.Matches(v, key.NewBinding(key.WithKeys(":"))) {
+			focused := m.ws.FocusedPane()
+			if focused == nil || !focused.View.IsEditing() {
+				m.commandMode = true
+				m.commandInput = textinput.New()
+				m.commandInput.Prompt = ""
+				m.commandInput.Focus()
+				return m, textinput.Blink
+			}
+		}
+
+		// Global view-opening shortcuts (0/4/5/i) work from any pane
 		// unless the focused pane has a text input capturing keystrokes.
 		if handled, cmd := m.handleGlobalKey(v); handled {
 			return m, cmd
@@ -96,13 +120,17 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		if handled, cmd := m.handleHistoryKey(v); handled {
 			return m, cmd
 		}
-		// Delegate all other keys to the workspace manager. This preserves
-		// view-local bindings such as q/esc for returning from a pane.
+		// Delegate all other keys to the workspace manager.
 		if m.ws != nil {
 			cmd := m.ws.Update(v)
 			return m, cmd
 		}
 		return m, nil
+
+	case workspace.AllClosedMsg:
+		m.quitting = true
+		return m, tea.Quit
+
 	case backToListMsg:
 		if m.ws != nil {
 			m.ws.CloseFocused()
@@ -112,10 +140,6 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-
-	case workspace.AllClosedMsg:
-		m.quitting = true
-		return m, tea.Quit
 
 	case workspace.CommandMsg:
 		return m, m.handleWorkspaceCommand(v)
@@ -342,6 +366,120 @@ func (m *AppModel) openHistoryPane() tea.Cmd {
 	return pane.View.Init()
 }
 
+// handleCommandKey routes keystrokes to the command bar input.
+func (m *AppModel) handleCommandKey(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(v, key.NewBinding(key.WithKeys("esc"))):
+		m.commandMode = false
+		m.commandInput.Blur()
+		return m, nil
+
+	case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
+		cmd := m.commandInput.Value()
+		m.commandMode = false
+		m.commandInput.Blur()
+		return m.executeCommand(cmd)
+
+	default:
+		var cmd tea.Cmd
+		m.commandInput, cmd = m.commandInput.Update(v)
+		return m, cmd
+	}
+}
+
+// executeCommand parses and runs a vim-style command.
+// Supported:
+//
+//	:w <name>   — save current scope rules as project <name>
+//	:e <name>   — load project <name> into the scope manager
+//	:ls         — list saved projects
+//	:q          — quit
+func (m *AppModel) executeCommand(input string) (tea.Model, tea.Cmd) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return m, nil
+	}
+
+	parts := strings.Fields(input)
+	cmd := parts[0]
+
+	switch cmd {
+	case "w":
+		name := ""
+		if len(parts) > 1 {
+			name = parts[1]
+		}
+		if name == "" {
+			name = m.activeProject
+		}
+		if name == "" {
+			name = "default"
+		}
+		if m.projectStore == nil {
+			ps, err := project.NewStore("")
+			if err != nil {
+				return m, nil
+			}
+			m.projectStore = ps
+		}
+		rules := m.scopeMgr.Rules()
+		if err := m.projectStore.Save(name, rules); err != nil {
+			return m, nil
+		}
+		m.activeProject = name
+		return m, nil
+
+	case "e":
+		if len(parts) < 2 {
+			return m, nil
+		}
+		name := parts[1]
+		if m.projectStore == nil {
+			ps, err := project.NewStore("")
+			if err != nil {
+				return m, nil
+			}
+			m.projectStore = ps
+		}
+		rules, err := m.projectStore.Load(name)
+		if err != nil {
+			return m, nil
+		}
+		m.scopeMgr.ReplaceRules(rules)
+		m.activeProject = name
+		// Refresh any open scope panes.
+		for _, p := range m.ws.Layout().Panes() {
+			if sv, ok := p.View.(*scopeView); ok {
+				sv.ScopeModel.rules = m.scopeMgr.Rules()
+				sv.ScopeModel.refreshTable()
+			}
+		}
+		return m, nil
+
+	case "ls":
+		if m.projectStore == nil {
+			ps, err := project.NewStore("")
+			if err != nil {
+				return m, nil
+			}
+			m.projectStore = ps
+		}
+		names, err := m.projectStore.List()
+		if err != nil || len(names) == 0 {
+			return m, nil
+		}
+		// Display projects by setting activeProject to the list.
+		m.activeProject = strings.Join(names, ", ")
+		return m, nil
+
+	case "q":
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	return m, nil
+}
+
 // handleHistoryKey handles application-level shortcuts that are only valid
 // while the history pane is focused.
 func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
@@ -498,8 +636,37 @@ func (m AppModel) View() tea.View {
 		return tea.View{Content: "Loading...", AltScreen: true}
 	}
 
+	var statusBar string
+	if m.activeProject != "" {
+		statusBar = fmt.Sprintf(" project: %s", m.activeProject)
+	}
+
 	if m.ws != nil {
 		content := m.ws.View()
+		if m.commandMode {
+			// Overlay command bar at the very bottom, replacing the status bar.
+			lines := strings.Split(content, "\n")
+			if len(lines) > 0 {
+				lines = lines[:len(lines)-1] // drop status bar
+			}
+			cmdBar := lipgloss.NewStyle().
+				Width(m.width).
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("255")).
+				Render(":" + m.commandInput.View())
+			lines = append(lines, cmdBar)
+			content = strings.Join(lines, "\n")
+		} else if statusBar != "" {
+			// Inject project name into status bar.
+			lines := strings.Split(content, "\n")
+			if len(lines) > 0 {
+				last := lines[len(lines)-1]
+				if strings.Contains(last, "proxy:") {
+					lines[len(lines)-1] = statusBar + " |" + last
+				}
+			}
+			content = strings.Join(lines, "\n")
+		}
 		return tea.View{Content: content, AltScreen: true}
 	}
 
@@ -508,7 +675,7 @@ func (m AppModel) View() tea.View {
 		return tea.View{Content: m.history.View(), AltScreen: true}
 	}
 
-	return tea.View{Content: "Ouroboros — press 0: History, 4: Scope, 5: Recon", AltScreen: true}
+	return tea.View{Content: "Ouroboros — 0: History  4: Scope  5: Recon  : :command", AltScreen: true}
 }
 
 // NewAppModel creates a new AppModel.
@@ -519,13 +686,16 @@ func NewAppModel(s store.Store, p *proxy.Proxy, sc *scope.Manager) *AppModel {
 	history := NewHistoryModel(s, 80, 24)
 	ws.AddPane(history)
 
+	ps, _ := project.NewStore("")
+
 	return &AppModel{
-		store:       s,
-		proxy:       p,
-		scopeMgr:    sc,
-		repeaterSvc: repeater.NewHTTPService(sc),
-		ws:          ws,
-		history:     history,
-		help:        help.New(),
+		store:        s,
+		proxy:        p,
+		scopeMgr:     sc,
+		repeaterSvc:  repeater.NewHTTPService(sc),
+		ws:           ws,
+		history:      history,
+		help:         help.New(),
+		projectStore: ps,
 	}
 }

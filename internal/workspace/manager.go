@@ -417,7 +417,7 @@ func (m *Manager) View() string {
 	if focused != nil {
 		helpText = focused.View.HelpText()
 	}
-	workspaceKeys := "^h/j/k/l: focus  ^w: split/close  0: history  4: scope  5: recon"
+	workspaceKeys := "^h/j/k/l: focus  ^w: split  0: hist  4: scope  5: recon  ::: cmd"
 	if helpText != "" {
 		helpText += "  "
 	}
