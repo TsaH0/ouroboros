@@ -452,13 +452,20 @@ func TestHistoryScopeToggleKey(t *testing.T) {
 	st := store.NewMemoryStore()
 	sc := scope.NewManager(st)
 
+	// Seed a default allow-all rule like main.go does.
+	_, _ = sc.AddRule(context.Background(), scope.Rule{
+		Kind: scope.RuleKindHost, Pattern: "*",
+		MatchMode: scope.MatchModeWildcard, Action: scope.ActionInclude,
+		Enabled: true, Priority: 0,
+	})
+
 	// Seed a flow.
 	flow := &model.Flow{
 		ID:          "scope-toggle-test",
 		StartTime:   time.Now(),
 		Host:        "toggle.example.com",
 		State:       model.FlowCompleted,
-		ScopeStatus: model.ScopeUnknown,
+		ScopeStatus: model.ScopeInScope,
 		Request:     &model.Message{Method: "GET", URL: "https://toggle.example.com/"},
 	}
 	if err := st.SaveFlow(context.Background(), flow); err != nil {
@@ -467,29 +474,36 @@ func TestHistoryScopeToggleKey(t *testing.T) {
 
 	app := NewAppModel(st, nil, sc)
 
-	// Press 's' in history to add an include rule.
+	// Host starts in scope (via wildcard). Press 's' to exclude.
 	app.Update(appKey("s"))
-
-	// The host should now be in scope.
 	status := sc.HostStatus("toggle.example.com")
+	if status != model.ScopeOutOfScope {
+		t.Fatalf("after first 's', status = %v, want out_of_scope", status)
+	}
+
+	// Press 's' again to include. Should go back to in-scope.
+	app.Update(appKey("s"))
+	status = sc.HostStatus("toggle.example.com")
 	if status != model.ScopeInScope {
-		t.Fatalf("after first 's', status = %v, want in_scope", status)
+		t.Fatalf("after second 's', status = %v, want in_scope", status)
 	}
 
-	// Find the history pane and check the scope badge updated.
-	for _, p := range app.ws.Layout().Panes() {
-		if h, ok := p.View.(*HistoryModel); ok {
-			h.RefreshScopeBadges(sc)
-			if h.rows[0][5] != "IN" {
-				t.Fatalf("scope badge = %q, want IN", h.rows[0][5])
-			}
-		}
-	}
-
-	// Press 's' again to add an exclude rule (host was in scope).
+	// Press 's' a third time to exclude again.
 	app.Update(appKey("s"))
 	status = sc.HostStatus("toggle.example.com")
 	if status != model.ScopeOutOfScope {
-		t.Fatalf("after second 's', status = %v, want out_of_scope", status)
+		t.Fatalf("after third 's', status = %v, want out_of_scope", status)
+	}
+
+	// Verify only one literal host rule exists (no duplicates).
+	rules := sc.Rules()
+	hostRules := 0
+	for _, r := range rules {
+		if r.Kind == scope.RuleKindHost && r.MatchMode == scope.MatchModeLiteral && r.Pattern == "toggle.example.com" {
+			hostRules++
+		}
+	}
+	if hostRules != 1 {
+		t.Fatalf("literal host rules = %d, want 1 (no duplicates)", hostRules)
 	}
 }

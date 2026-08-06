@@ -148,6 +148,30 @@ func (m *Manager) ReplaceRules(rules []Rule) {
 	m.rebuild()
 }
 
+// RemoveHostRules deletes all literal host rules matching the given
+// hostname pattern. Returns the number of rules removed.
+func (m *Manager) RemoveHostRules(ctx context.Context, host string) int {
+	var removed int
+	m.mu.Lock()
+	filtered := make([]Rule, 0, len(m.rules))
+	for _, r := range m.rules {
+		if r.Kind == RuleKindHost && r.MatchMode == MatchModeLiteral && r.Pattern == host {
+			removed++
+			if m.store != nil {
+				_ = m.store.DeleteScopeRule(ctx, r.ID)
+			}
+		} else {
+			filtered = append(filtered, r)
+		}
+	}
+	m.rules = filtered
+	m.mu.Unlock()
+	if removed > 0 {
+		m.rebuild()
+	}
+	return removed
+}
+
 // Evaluate returns true if the URL is explicitly in scope.
 func (m *Manager) Evaluate(u *url.URL) bool {
 	matcher := m.matcher.Load()

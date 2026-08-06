@@ -531,16 +531,22 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		if flow == nil || flow.Host == "" {
 			return true, nil
 		}
+		// Check current status BEFORE removing old rules.
 		status := m.scopeMgr.HostStatus(flow.Host)
+
+		// Remove any existing literal host rules for this host
+		// so the toggle is clean (no conflicting duplicates).
+		m.scopeMgr.RemoveHostRules(context.Background(), flow.Host)
+
 		if status == model.ScopeInScope {
-			// Add exclude rule for this host.
+			// Was in scope (via wildcard default) → add explicit exclude.
 			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
 				Kind: scope.RuleKindHost, Pattern: flow.Host,
 				MatchMode: scope.MatchModeLiteral, Action: scope.ActionExclude,
 				Enabled: true, Priority: 100,
 			})
 		} else {
-			// Add include rule for this host.
+			// Was out of scope or unknown → add explicit include.
 			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
 				Kind: scope.RuleKindHost, Pattern: flow.Host,
 				MatchMode: scope.MatchModeLiteral, Action: scope.ActionInclude,
