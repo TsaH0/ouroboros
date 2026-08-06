@@ -110,7 +110,7 @@ func (p *openAIProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 
 	var result struct {
 		Choices []struct {
-			Message      struct {
+			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`

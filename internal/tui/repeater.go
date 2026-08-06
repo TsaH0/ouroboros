@@ -25,11 +25,12 @@ type RepeaterModel struct {
 	bodyIn    textarea.Model
 	respView  viewport.Model
 	keymap    repeaterKeyMap
-	help      string
 	resp      *model.Message
+	respErr   error
 	width     int
 	height    int
-	focusIdx  int // 0=method, 1=url, 2=headers, 3=body
+	focusIdx  int  // 0=method, 1=url, 2=headers, 3=body, 4=response
+	editing   bool // vim-style insert mode for the selected request field
 }
 
 type repeaterKeyMap struct {
@@ -37,12 +38,13 @@ type repeaterKeyMap struct {
 	back key.Binding
 	next key.Binding
 	prev key.Binding
+	edit key.Binding
+	done key.Binding
 }
 
 func NewRepeaterModel(flow *model.Flow, width, height int) RepeaterModel {
 	methodIn := textinput.New()
 	methodIn.Placeholder = "GET"
-	methodIn.Focus()
 
 	urlIn := textinput.New()
 	urlIn.Placeholder = "https://example.com/api"
@@ -53,7 +55,7 @@ func NewRepeaterModel(flow *model.Flow, width, height int) RepeaterModel {
 	bodyIn := textarea.New()
 	bodyIn.Placeholder = `{"key": "value"}`
 
-	respView := viewport.New(viewport.WithWidth(width-2), viewport.WithHeight(height/3))
+	respView := viewport.New(viewport.WithWidth(max(20, width-2)), viewport.WithHeight(max(3, height/4)))
 
 	m := RepeaterModel{
 		flow:      flow,
@@ -65,21 +67,22 @@ func NewRepeaterModel(flow *model.Flow, width, height int) RepeaterModel {
 		width:     width,
 		height:    height,
 		keymap: repeaterKeyMap{
-			send: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
+			send: key.NewBinding(key.WithKeys("s", "f5", "ctrl+j"), key.WithHelp("s/f5", "send")),
 			back: key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
-			next: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-			prev: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+			next: key.NewBinding(key.WithKeys("j", "down", "tab"), key.WithHelp("j/tab", "next")),
+			prev: key.NewBinding(key.WithKeys("k", "up", "shift+tab"), key.WithHelp("k", "prev")),
+			edit: key.NewBinding(key.WithKeys("i", "enter"), key.WithHelp("i/enter", "edit")),
+			done: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "normal")),
 		},
-		help: "tab: next  shift+tab: prev  enter: send  q: back",
 	}
 
-	// Pre-fill from flow.
 	if flow.Request != nil {
 		m.methodIn.SetValue(flow.Request.Method)
 		m.urlIn.SetValue(flow.Request.URL)
 		m.headersIn.SetValue(renderHeaders(flow.Request.Headers))
 		m.bodyIn.SetValue(string(flow.Request.Body))
 	}
+	m.updateFocus()
 
 	return m
 }
@@ -93,45 +96,88 @@ func (m RepeaterModel) Update(mgs tea.Msg) (RepeaterModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
-		m.respView.SetWidth(v.Width - 2)
-		m.respView.SetHeight(v.Height / 3)
+		m.respView.SetWidth(max(20, v.Width-2))
+		m.respView.SetHeight(max(3, v.Height/4))
 		return m, nil
 	case tea.KeyPressMsg:
-		switch {
-		case key.Matches(v, m.keymap.back):
-			return m, func() tea.Msg { return backToListMsg{} }
-		case key.Matches(v, m.keymap.next):
-			m.focusIdx = (m.focusIdx + 1) % 4
-			m.updateFocus()
-			return m, nil
-		case key.Matches(v, m.keymap.prev):
-			m.focusIdx = (m.focusIdx + 3) % 4
-			m.updateFocus()
-			return m, nil
-		case key.Matches(v, m.keymap.send):
-			// Only send when focused on body (last field) and enter pressed.
-			if m.focusIdx == 3 {
-				return m, func() tea.Msg {
-					return repeaterSendMsg{
-						flow: m.flow,
-						edits: repeater.Edits{
-							Method:  m.methodIn.Value(),
-							URL:     m.urlIn.Value(),
-							Headers: parseHeaders(m.headersIn.Value()),
-							Body:    []byte(m.bodyIn.Value()),
-						},
-					}
+		if m.editing {
+			switch {
+			case key.Matches(v, m.keymap.done):
+				m.editing = false
+				m.updateFocus()
+				return m, nil
+			case key.Matches(v, m.keymap.send):
+				return m, m.sendCmd()
+			case key.Matches(v, m.keymap.next):
+				m.focusIdx = (m.focusIdx + 1) % 4
+				m.updateFocus()
+				return m, nil
+			case key.Matches(v, m.keymap.prev):
+				m.focusIdx = (m.focusIdx + 3) % 4
+				m.updateFocus()
+				return m, nil
+			}
+		} else {
+			switch {
+			case key.Matches(v, m.keymap.back):
+				return m, func() tea.Msg { return backToListMsg{} }
+			case key.Matches(v, m.keymap.next):
+				m.focusIdx = (m.focusIdx + 1) % 5
+				m.updateFocus()
+				return m, nil
+			case key.Matches(v, m.keymap.prev):
+				m.focusIdx = (m.focusIdx + 4) % 5
+				m.updateFocus()
+				return m, nil
+			case key.Matches(v, m.keymap.edit):
+				if m.focusIdx < 4 {
+					m.editing = true
+					m.updateFocus()
 				}
+				return m, nil
+			case key.Matches(v, m.keymap.send):
+				return m, m.sendCmd()
 			}
 		}
 	}
 
+	if m.editing {
+		return m.updateFocusedInput(mgs)
+	}
+	if m.focusIdx == 4 {
+		var cmd tea.Cmd
+		m.respView, cmd = m.respView.Update(mgs)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m RepeaterModel) sendCmd() tea.Cmd {
+	return func() tea.Msg {
+		return repeaterSendMsg{
+			flow: m.flow,
+			edits: repeater.Edits{
+				Method:  strings.TrimSpace(m.methodIn.Value()),
+				URL:     strings.TrimSpace(m.urlIn.Value()),
+				Headers: parseHeaders(m.headersIn.Value()),
+				Body:    []byte(m.bodyIn.Value()),
+			},
+		}
+	}
+}
+
+func (m RepeaterModel) updateFocusedInput(mgs tea.Msg) (RepeaterModel, tea.Cmd) {
 	var cmd tea.Cmd
-	m.methodIn, cmd = m.methodIn.Update(mgs)
-	m.urlIn, cmd = m.urlIn.Update(mgs)
-	m.headersIn, cmd = m.headersIn.Update(mgs)
-	m.bodyIn, cmd = m.bodyIn.Update(mgs)
-	m.respView, cmd = m.respView.Update(mgs)
+	switch m.focusIdx {
+	case 0:
+		m.methodIn, cmd = m.methodIn.Update(mgs)
+	case 1:
+		m.urlIn, cmd = m.urlIn.Update(mgs)
+	case 2:
+		m.headersIn, cmd = m.headersIn.Update(mgs)
+	case 3:
+		m.bodyIn, cmd = m.bodyIn.Update(mgs)
+	}
 	return m, cmd
 }
 
@@ -140,6 +186,9 @@ func (m *RepeaterModel) updateFocus() {
 	m.urlIn.Blur()
 	m.headersIn.Blur()
 	m.bodyIn.Blur()
+	if !m.editing {
+		return
+	}
 	switch m.focusIdx {
 	case 0:
 		m.methodIn.Focus()
@@ -153,32 +202,52 @@ func (m *RepeaterModel) updateFocus() {
 }
 
 func (m RepeaterModel) View() tea.View {
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
-		Width(m.width).Align(lipgloss.Center).
-		Render(" Sentinel — Repeater")
+	width := max(40, m.width)
+	height := max(16, m.height)
+	contentWidth := max(20, width-4)
 
-	// Request section — use half the available height.
-	reqHeight := m.height/2 - 4
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Width(width).Align(lipgloss.Center)
+	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	labelStyle := lipgloss.NewStyle().Width(10)
 
-	methodLine := lipgloss.NewStyle().Width(10).Render("Method:") + m.methodIn.View()
-	urlLine := lipgloss.NewStyle().Width(10).Render("URL:") + m.urlIn.View()
+	modeText := "NORMAL"
+	if m.editing {
+		modeText = "INSERT"
+	}
+	header := headerStyle.Render(" Sentinel — Repeater [" + modeText + "]")
 
-	m.headersIn.SetWidth(m.width - 14)
-	m.headersIn.SetHeight(reqHeight / 4)
-	headersLine := lipgloss.NewStyle().Width(10).Render("Headers:") + "\n" + m.headersIn.View()
+	tallArea := max(6, height-9)
+	headersHeight := clamp(tallArea/3, 5, max(5, tallArea-5))
+	bodyHeight := max(5, tallArea-headersHeight)
+	respHeight := max(3, height-(headersHeight+bodyHeight+8))
 
-	m.bodyIn.SetWidth(m.width - 14)
-	m.bodyIn.SetHeight(reqHeight / 2)
-	bodyLine := lipgloss.NewStyle().Width(10).Render("Body:") + "\n" + m.bodyIn.View()
+	m.methodIn.SetWidth(max(8, contentWidth-10))
+	m.urlIn.SetWidth(max(12, contentWidth-10))
+	m.headersIn.SetWidth(contentWidth)
+	m.headersIn.SetHeight(headersHeight)
+	m.bodyIn.SetWidth(contentWidth)
+	m.bodyIn.SetHeight(bodyHeight)
+	m.respView.SetWidth(contentWidth)
+	m.respView.SetHeight(respHeight)
 
-	// Response section.
-	respHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("Response")
+	methodLine := m.renderFieldLabel(0, labelStyle, activeStyle, "Method:") + m.methodIn.View()
+	urlLine := m.renderFieldLabel(1, labelStyle, activeStyle, "URL:") + m.urlIn.View()
+	headersLine := m.renderFieldLabel(2, labelStyle, activeStyle, "Headers:") + "\n" + m.headersIn.View()
+	bodyLine := m.renderFieldLabel(3, labelStyle, activeStyle, "Body:") + "\n" + m.bodyIn.View()
+
+	respLabel := "Response"
+	if m.focusIdx == 4 {
+		respLabel = activeStyle.Render("▶ Response")
+	} else {
+		respLabel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("Response")
+	}
 	respContent := m.respView.View()
-	if m.resp == nil {
-		respContent = "(no response yet — tab to body field, then press enter to send)"
+	if m.resp == nil && m.respErr == nil {
+		respContent = "(no response yet — press s or F5 from normal mode to send)"
 	}
 
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.help)
+	help := "NORMAL: j/k/tab move  i/enter edit  s/f5 send  q back | INSERT: esc normal  tab next  s/f5 send"
+	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MaxWidth(width).Render(help)
 
 	s := lipgloss.JoinVertical(lipgloss.Left,
 		header,
@@ -186,11 +255,18 @@ func (m RepeaterModel) View() tea.View {
 		urlLine,
 		headersLine,
 		bodyLine,
-		respHeader,
+		respLabel,
 		respContent,
 		footer,
 	)
 	return tea.View{Content: s, AltScreen: true}
+}
+
+func (m RepeaterModel) renderFieldLabel(idx int, base, active lipgloss.Style, label string) string {
+	if m.focusIdx == idx {
+		return active.Render("▶ " + strings.TrimSuffix(label, ":") + ":")
+	}
+	return base.Render(label)
 }
 
 // repeaterSendMsg signals the AppModel to send the replay request.
@@ -233,9 +309,19 @@ func parseHeaders(s string) map[string][]string {
 	return h
 }
 
-func setRepeaterResponse(m *RepeaterModel, resp *model.Message) {
+func setRepeaterResponse(m *RepeaterModel, resp *model.Message, err error) {
 	m.resp = resp
+	m.respErr = err
 	var b bytes.Buffer
+	if err != nil {
+		fmt.Fprintf(&b, "Replay error: %v\n", err)
+		m.respView.SetContent(b.String())
+		return
+	}
+	if resp == nil {
+		m.respView.SetContent("Replay returned no response.")
+		return
+	}
 	fmt.Fprintf(&b, "%s %d\n", resp.HTTPVersion, resp.StatusCode)
 	for k, vals := range resp.Headers {
 		for _, v := range vals {
@@ -246,4 +332,21 @@ func setRepeaterResponse(m *RepeaterModel, resp *model.Message) {
 		fmt.Fprintf(&b, "\n%s\n", string(resp.Body))
 	}
 	m.respView.SetContent(b.String())
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }

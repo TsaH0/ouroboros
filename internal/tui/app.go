@@ -69,12 +69,17 @@ func (m *AppModel) Init() tea.Cmd {
 
 func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle back-to-list transitions from any sub-model.
-	switch mgs.(type) {
+	switch v := mgs.(type) {
 	case backToListMsg:
 		m.mode = ModeHistory
 		m.detail = nil
 		m.repeater = nil
 		m.llm = nil
+		return m, nil
+	case repeaterResultMsg:
+		if m.repeater != nil {
+			setRepeaterResponse(m.repeater, v.resp, v.err)
+		}
 		return m, nil
 	}
 
@@ -87,6 +92,9 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			if detailCmd != nil {
 				cmdMsg := detailCmd()
 				switch v := cmdMsg.(type) {
+				case backToListMsg:
+					m.mode = ModeHistory
+					m.detail = nil
 				case msg.ForwardInterceptedFlow:
 					if m.proxy != nil {
 						m.proxy.HandleInterceptCommand(v)
@@ -110,6 +118,9 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			if repeaterCmd != nil {
 				cmdMsg := repeaterCmd()
 				switch v := cmdMsg.(type) {
+				case backToListMsg:
+					m.mode = ModeHistory
+					m.repeater = nil
 				case repeaterSendMsg:
 					return m, func() tea.Msg {
 						resp, err := m.repeaterSvc.Replay(context.Background(), v.flow, v.edits)
@@ -126,10 +137,13 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			if llmCmd != nil {
 				cmdMsg := llmCmd()
 				switch v := cmdMsg.(type) {
+				case backToListMsg:
+					m.mode = ModeHistory
+					m.llm = nil
 				case llmAnalyzeMsg:
 					return m, func() tea.Msg {
 						if m.llmAnalyzer == nil {
-							return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY or run Ollama)")}
+							return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, or run Ollama)")}
 						}
 						result, err := m.llmAnalyzer.AnalyzeFlow(context.Background(), v.flow)
 						return llmResultMsg{result: result, err: err}
@@ -238,7 +252,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repeaterResultMsg:
 		if m.repeater != nil {
-			setRepeaterResponse(m.repeater, v.resp)
+			setRepeaterResponse(m.repeater, v.resp, v.err)
 		}
 		return m, nil
 

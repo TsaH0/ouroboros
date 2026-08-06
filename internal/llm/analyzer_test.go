@@ -26,7 +26,7 @@ func TestAnalyzer_AnalyzeFlow_NoFindings(t *testing.T) {
 	analyzer := NewAnalyzer(provider, "test-model")
 
 	flow := &model.Flow{
-		Request: &model.Message{Method: "GET", URL: "https://example.com/", HTTPVersion: "HTTP/1.1", Headers: map[string][]string{}},
+		Request:  &model.Message{Method: "GET", URL: "https://example.com/", HTTPVersion: "HTTP/1.1", Headers: map[string][]string{}},
 		Response: &model.Message{StatusCode: 200, HTTPVersion: "HTTP/1.1", Headers: map[string][]string{}, Body: []byte("ok")},
 	}
 
@@ -44,7 +44,7 @@ func TestAnalyzer_AnalyzeFlow_WithFindings(t *testing.T) {
 	analyzer := NewAnalyzer(provider, "test-model")
 
 	flow := &model.Flow{
-		Request: &model.Message{Method: "GET", URL: "https://example.com/?q=<script>", HTTPVersion: "HTTP/1.1", Headers: map[string][]string{}},
+		Request:  &model.Message{Method: "GET", URL: "https://example.com/?q=<script>", HTTPVersion: "HTTP/1.1", Headers: map[string][]string{}},
 		Response: &model.Message{StatusCode: 200, HTTPVersion: "HTTP/1.1", Headers: map[string][]string{"Content-Type": {"text/html"}}, Body: []byte("<script>alert(1)</script>")},
 	}
 

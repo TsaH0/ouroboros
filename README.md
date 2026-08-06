@@ -63,6 +63,46 @@ make run
 | `make test-race` | Run tests with race detector |
 | `make run` | Build and run |
 
+## TUI usage
+
+History view:
+
+| Key | Action |
+|-----|--------|
+| `enter` | Open selected flow detail |
+| `r` | Open selected flow in Repeater |
+| `a` | Open selected flow in LLM analysis |
+| `q` / `ctrl+c` | Quit |
+
+Repeater view:
+
+| Mode | Key | Action |
+|------|-----|--------|
+| Normal | `j` / `k` / `tab` / `shift+tab` | Move between Method, URL, Headers, Body, Response |
+| Normal | `i` / `enter` | Edit focused request field |
+| Normal | `s` / `F5` / `ctrl+j` | Send replay request |
+| Normal | `q` / `esc` | Back to history |
+| Insert | `esc` | Return to normal mode |
+| Insert | `tab` / `shift+tab` | Move to next/previous request field |
+| Insert | `s` / `F5` / `ctrl+j` | Send replay request |
+
+LLM analysis:
+
+```sh
+# NVIDIA NIM
+export NVIDIA_API_KEY="..."
+go run ./cmd/sentinel --provider=nvidia --model=poolside/laguna-xs-2.1
+
+# OpenAI
+export OPENAI_API_KEY="..."
+go run ./cmd/sentinel --provider=openai --model=gpt-4o-mini
+
+# Ollama
+go run ./cmd/sentinel --provider=ollama --model=llama3.2
+```
+
+In the TUI, select a captured flow, press `a`, then press `a` again in the LLM view to run analysis.
+
 ## Milestone Roadmap
 
 - **Milestone 0** (current) — Foundation: domain models, in-memory store, scope service, Bubble Tea shell with synthetic traffic display (✓ done)

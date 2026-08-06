@@ -25,9 +25,9 @@ import (
 func main() {
 	installCA := flag.Bool("install-ca", false, "Print the CA certificate for browser installation")
 	proxyAddr := flag.String("proxy-addr", ":8080", "Proxy listen address")
-	providerType := flag.String("provider", "", "LLM provider: openai, ollama, or nvidia")
+	providerType := flag.String("provider", "", "LLM provider: openai, ollama, or nvidia (auto-detects when empty)")
 	apiBase := flag.String("api-base", "", "LLM API base URL (e.g. https://integrate.api.nvidia.com/v1)")
-	apiKey := flag.String("api-key", "", "LLM API key (default: $OPENAI_API_KEY)")
+	apiKey := flag.String("api-key", "", "LLM API key (defaults to $NVIDIA_API_KEY or $OPENAI_API_KEY)")
 	model := flag.String("model", "", "LLM model name (e.g. poolside/laguna-xs-2.1)")
 	flag.Parse()
 
@@ -70,27 +70,45 @@ func main() {
 	pxy.SetProgram(p)
 
 	// Configure LLM provider.
+	providerName := *providerType
+	if providerName == "" {
+		switch {
+		case os.Getenv("NVIDIA_API_KEY") != "":
+			providerName = "nvidia"
+		case os.Getenv("OPENAI_API_KEY") != "":
+			providerName = "openai"
+		default:
+			providerName = "ollama"
+		}
+	}
+
 	pt := llm.ProviderOpenAI
-	switch *providerType {
+	switch providerName {
 	case "ollama":
 		pt = llm.ProviderOllama
 	case "nvidia":
 		pt = llm.ProviderOpenAI
-		// NVIDIA uses OpenAI-compatible API.
+		// NVIDIA NIM uses an OpenAI-compatible API.
 		if *apiBase == "" {
 			*apiBase = "https://integrate.api.nvidia.com/v1"
 		}
-	case "openai", "":
+		if *apiKey == "" {
+			*apiKey = os.Getenv("NVIDIA_API_KEY")
+		}
+		if *model == "" {
+			*model = "poolside/laguna-xs-2.1"
+		}
+	case "openai":
 		pt = llm.ProviderOpenAI
 	default:
-		log.Fatalf("unknown provider: %s (use openai, ollama, or nvidia)", *providerType)
+		log.Fatalf("unknown provider: %s (use openai, ollama, or nvidia)", providerName)
 	}
 
 	provider, modelName := llm.NewProvider(pt, *apiBase, *apiKey, *model)
 	if provider != nil {
 		analyzer := llm.NewAnalyzer(provider, modelName)
 		app.SetAnalyzer(analyzer)
-		log.Printf("LLM provider: %s, model: %s", *providerType, modelName)
+		log.Printf("LLM provider: %s, model: %s", providerName, modelName)
 	} else {
 		log.Println("no LLM provider configured (use --provider, --api-base, --api-key, --model)")
 	}
