@@ -22,6 +22,8 @@ type LLMModel struct {
 	viewport viewport.Model
 	keymap   llmKeyMap
 	help     string
+	width    int
+	height   int
 }
 
 type llmKeyMap struct {
@@ -40,18 +42,20 @@ type llmResultMsg struct {
 	err    error
 }
 
-func NewLLMModel(flow *model.Flow) LLMModel {
+func NewLLMModel(flow *model.Flow, width, height int) LLMModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
-	vp := viewport.New(viewport.WithWidth(100), viewport.WithHeight(20))
+	vp := viewport.New(viewport.WithWidth(width-2), viewport.WithHeight(height-4))
 	vp.SetContent("(press a to analyze)")
 
 	return LLMModel{
 		flow:     flow,
 		spinner:  sp,
 		viewport: vp,
+		width:    width,
+		height:   height,
 		keymap: llmKeyMap{
 			analyze: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "analyze")),
 			back:    key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
@@ -66,6 +70,12 @@ func (m LLMModel) Init() tea.Cmd {
 
 func (m LLMModel) Update(mgs tea.Msg) (LLMModel, tea.Cmd) {
 	switch v := mgs.(type) {
+	case tea.WindowSizeMsg:
+		m.width = v.Width
+		m.height = v.Height
+		m.viewport.SetWidth(v.Width - 2)
+		m.viewport.SetHeight(v.Height - 4)
+		return m, nil
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(v, m.keymap.back):
@@ -88,7 +98,9 @@ func (m LLMModel) Update(mgs tea.Msg) (LLMModel, tea.Cmd) {
 }
 
 func (m LLMModel) View() tea.View {
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render(" Sentinel — LLM Analysis")
+	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
+		Width(m.width).Align(lipgloss.Center).
+		Render(" Sentinel — LLM Analysis")
 
 	body := m.viewport.View()
 	if m.loading {
@@ -98,7 +110,7 @@ func (m LLMModel) View() tea.View {
 	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.help)
 
 	s := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
-	return tea.NewView(s)
+	return tea.View{Content: s, AltScreen: true}
 }
 
 func renderLLMResult(result *llm.AnalysisResult, err error) string {

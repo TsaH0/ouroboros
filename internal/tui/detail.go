@@ -18,7 +18,8 @@ type DetailModel struct {
 	flow     *model.Flow
 	viewport viewport.Model
 	keymap   detailKeyMap
-	help     string
+	width    int
+	height   int
 }
 
 type detailKeyMap struct {
@@ -27,27 +28,35 @@ type detailKeyMap struct {
 	back    key.Binding
 }
 
-func NewDetailModel(flow *model.Flow) DetailModel {
-	content := renderFlowDetail(flow)
-	vp := viewport.New(viewport.WithWidth(100), viewport.WithHeight(20))
-	vp.SetContent(content)
+func NewDetailModel(flow *model.Flow, width, height int) DetailModel {
+	vp := viewport.New(viewport.WithWidth(width-2), viewport.WithHeight(height-4))
+	vp.SetContent(renderFlowDetail(flow))
 
 	return DetailModel{
 		flow:     flow,
 		viewport: vp,
+		width:    width,
+		height:   height,
 		keymap: detailKeyMap{
 			forward: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "forward")),
 			drop:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "drop")),
 			back:    key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
 		},
-		help: "f: forward  d: drop  q: back",
 	}
 }
 
-func (m DetailModel) Init() tea.Cmd { return nil }
+func (m DetailModel) Init() tea.Cmd {
+	return nil
+}
 
 func (m DetailModel) Update(mgs tea.Msg) (DetailModel, tea.Cmd) {
 	switch v := mgs.(type) {
+	case tea.WindowSizeMsg:
+		m.width = v.Width
+		m.height = v.Height
+		m.viewport.SetWidth(v.Width - 2)
+		m.viewport.SetHeight(v.Height - 4)
+		return m, nil
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(v, m.keymap.forward):
@@ -66,53 +75,48 @@ func (m DetailModel) Update(mgs tea.Msg) (DetailModel, tea.Cmd) {
 
 func (m DetailModel) View() tea.View {
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
+		Width(m.width).Align(lipgloss.Center).
 		Render(" Sentinel — Flow Detail")
+
+	helpLine := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
+		Render("f: forward  d: drop  q: back")
+
 	body := m.viewport.View()
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.help)
 
-	s := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
-	return tea.NewView(s)
+	s := lipgloss.JoinVertical(lipgloss.Left, header, body, helpLine)
+	return tea.View{Content: s, AltScreen: true}
 }
-
-// backToListMsg signals the AppModel to return to the history view.
-type backToListMsg struct{}
 
 func renderFlowDetail(flow *model.Flow) string {
 	var b strings.Builder
 
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Flow ID: ") + flow.ID + "\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Host: ") + flow.Host + "\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Scheme: ") + flow.Scheme + "\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("State: ") + string(flow.State) + "\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Scope: ") + string(flow.ScopeStatus) + "\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Duration: ") + flow.Duration.String() + "\n\n")
-
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("Request") + "\n")
 	if flow.Request != nil {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("=== Request ===\n"))
-		b.WriteString(fmt.Sprintf("%s %s %s\n", flow.Request.Method, flow.Request.URL, flow.Request.HTTPVersion))
+		b.WriteString(fmt.Sprintf("Method: %s\n", flow.Request.Method))
+		b.WriteString(fmt.Sprintf("URL: %s\n", flow.Request.URL))
+		b.WriteString(fmt.Sprintf("Version: %s\n", flow.Request.HTTPVersion))
 		for k, vals := range flow.Request.Headers {
 			for _, v := range vals {
 				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
 		}
 		if len(flow.Request.Body) > 0 {
-			b.WriteString("\n" + string(flow.Request.Body) + "\n")
+			b.WriteString(fmt.Sprintf("\n%s\n", string(flow.Request.Body)))
 		}
-		b.WriteString("\n")
 	}
 
+	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("Response") + "\n")
 	if flow.Response != nil {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("=== Response ===\n"))
-		b.WriteString(fmt.Sprintf("%s %d\n", flow.Response.HTTPVersion, flow.Response.StatusCode))
+		b.WriteString(fmt.Sprintf("Status: %d\n", flow.Response.StatusCode))
+		b.WriteString(fmt.Sprintf("Version: %s\n", flow.Response.HTTPVersion))
 		for k, vals := range flow.Response.Headers {
 			for _, v := range vals {
 				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
 		}
 		if len(flow.Response.Body) > 0 {
-			b.WriteString("\n" + string(flow.Response.Body) + "\n")
+			b.WriteString(fmt.Sprintf("\n%s\n", string(flow.Response.Body)))
 		}
-		b.WriteString("\n")
 	}
 
 	if flow.Error != "" {

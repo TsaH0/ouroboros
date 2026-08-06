@@ -43,13 +43,24 @@ type AppModel struct {
 	detail      *DetailModel
 	repeater    *RepeaterModel
 	llm         *LLMModel
+	width       int
+	height      int
+	ready       bool
 }
 
 type appKeyMap struct {
-	quit      key.Binding
-	enter     key.Binding
-	repeater  key.Binding
-	llm       key.Binding
+	quit     key.Binding
+	enter    key.Binding
+	repeater key.Binding
+	llm      key.Binding
+}
+
+// backToListMsg signals a sub-view to return to the history list.
+type backToListMsg struct{}
+
+// SetAnalyzer sets the LLM analyzer (called from main after provider config).
+func (m *AppModel) SetAnalyzer(a *llm.Analyzer) {
+	m.llmAnalyzer = a
 }
 
 func (m *AppModel) Init() tea.Cmd {
@@ -123,13 +134,6 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 						result, err := m.llmAnalyzer.AnalyzeFlow(context.Background(), v.flow)
 						return llmResultMsg{result: result, err: err}
 					}
-				case llmResultMsg:
-					if m.llm != nil {
-						m.llm.result = v.result
-						m.llm.loading = false
-						m.llm.viewport.SetContent(renderLLMResult(v.result, v.err))
-					}
-					return m, nil
 				}
 			}
 			return m, nil
@@ -137,6 +141,15 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch v := mgs.(type) {
+	case tea.WindowSizeMsg:
+		m.width = v.Width
+		m.height = v.Height
+		m.ready = true
+		m.table.SetWidth(v.Width - 2)
+		m.table.SetHeight(v.Height - 4)
+		m.help.SetWidth(v.Width)
+		return m, nil
+
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(v, m.keymap.quit):
@@ -149,7 +162,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 				flows, _ := m.store.List(context.Background())
 				for _, f := range flows {
 					if len(f.ID) >= 8 && f.ID[len(f.ID)-8:] == shortID {
-						detail := NewDetailModel(f)
+						detail := NewDetailModel(f, m.width, m.height)
 						m.mode = ModeDetail
 						m.detail = &detail
 						break
@@ -163,7 +176,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 				flows, _ := m.store.List(context.Background())
 				for _, f := range flows {
 					if len(f.ID) >= 8 && f.ID[len(f.ID)-8:] == shortID {
-						r := NewRepeaterModel(f)
+						r := NewRepeaterModel(f, m.width, m.height)
 						m.mode = ModeRepeater
 						m.repeater = &r
 						break
@@ -177,7 +190,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 				flows, _ := m.store.List(context.Background())
 				for _, f := range flows {
 					if len(f.ID) >= 8 && f.ID[len(f.ID)-8:] == shortID {
-						l := NewLLMModel(f)
+						l := NewLLMModel(f, m.width, m.height)
 						m.mode = ModeLLM
 						m.llm = &l
 						break
@@ -218,7 +231,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		if err != nil || flow == nil {
 			return m, nil
 		}
-		detail := NewDetailModel(flow)
+		detail := NewDetailModel(flow, m.width, m.height)
 		m.mode = ModeDetail
 		m.detail = &detail
 		return m, nil
@@ -244,6 +257,10 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) View() tea.View {
+	if !m.ready {
+		return tea.NewView("Loading...")
+	}
+
 	switch m.mode {
 	case ModeDetail:
 		if m.detail != nil {
@@ -260,12 +277,15 @@ func (m AppModel) View() tea.View {
 	}
 
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
+		Width(m.width).Align(lipgloss.Center).
 		Render(" Sentinel — HTTP History")
 	body := m.table.View()
-	footer := m.help.ShortHelpView([]key.Binding{m.keymap.quit, m.keymap.enter, m.keymap.repeater, m.keymap.llm})
+	footer := m.help.ShortHelpView([]key.Binding{
+		m.keymap.quit, m.keymap.enter, m.keymap.repeater, m.keymap.llm,
+	})
 
 	s := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
-	return tea.NewView(s)
+	return tea.View{Content: s, AltScreen: true}
 }
 
 // NewAppModel creates a new AppModel.
@@ -283,22 +303,12 @@ func NewAppModel(s *store.InMemoryFlowStore, p *proxy.Proxy) *AppModel {
 	t := table.New(
 		table.WithColumns(cols),
 		table.WithFocused(true),
-		table.WithHeight(20),
-		table.WithWidth(100),
 	)
-
-	// Initialize LLM provider.
-	var llmAnalyzer *llm.Analyzer
-	provider, modelName, _ := llm.NewProvider()
-	if provider != nil {
-		llmAnalyzer = llm.NewAnalyzer(provider, modelName)
-	}
 
 	return &AppModel{
 		store:       s,
 		proxy:       p,
 		repeaterSvc: repeater.NewHTTPService(),
-		llmAnalyzer: llmAnalyzer,
 		mode:        ModeHistory,
 		table:       t,
 		help:        help.New(),

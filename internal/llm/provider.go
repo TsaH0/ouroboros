@@ -43,24 +43,26 @@ type Provider interface {
 	ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error)
 }
 
-// --- OpenAI Provider ---
+// --- OpenAI-compatible Provider ---
 
-type openaiProvider struct {
+type openAIProvider struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
 }
 
-// NewOpenAIProvider creates an OpenAI provider.
-func NewOpenAIProvider(apiKey string) Provider {
-	return &openaiProvider{
-		baseURL:    "https://api.openai.com/v1",
+// NewOpenAIProvider creates an OpenAI-compatible provider.
+// baseURL should be the full API base (e.g. "https://api.openai.com/v1" or
+// "https://integrate.api.nvidia.com/v1").
+func NewOpenAIProvider(baseURL, apiKey string) Provider {
+	return &openAIProvider{
+		baseURL:    baseURL,
 		apiKey:     apiKey,
 		httpClient: &http.Client{},
 	}
 }
 
-func (p *openaiProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+func (p *openAIProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	type apiMessage struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -82,7 +84,7 @@ func (p *openaiProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 			"json_schema": map[string]any{
 				"name":   "analysis_result",
 				"strict": true,
-				"schema":  json.RawMessage(req.Schema),
+				"schema": json.RawMessage(req.Schema),
 			},
 		}
 	}
@@ -191,8 +193,8 @@ func (p *ollamaProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
-		Done         bool   `json:"done"`
-		DoneReason   string `json:"done_reason,omitempty"`
+		Done       bool   `json:"done"`
+		DoneReason string `json:"done_reason,omitempty"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("ollama unmarshal: %w", err)
@@ -206,11 +208,39 @@ func (p *ollamaProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 
 // --- Provider Factory ---
 
-// NewProvider creates a provider from environment variables.
-// Prefers OpenAI if OPENAI_API_KEY is set; falls back to Ollama at localhost.
-func NewProvider() (Provider, string, error) {
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		return NewOpenAIProvider(key), "gpt-4o-mini", nil
+// ProviderType selects the LLM backend.
+type ProviderType string
+
+const (
+	ProviderOpenAI ProviderType = "openai"
+	ProviderOllama ProviderType = "ollama"
+)
+
+// NewProvider creates a provider from explicit parameters.
+// apiBase is the full API base URL (e.g. "https://api.openai.com/v1").
+// For Ollama, apiBase is the server URL (e.g. "http://localhost:11434").
+func NewProvider(pt ProviderType, apiBase, apiKey, model string) (Provider, string) {
+	switch pt {
+	case ProviderOpenAI:
+		if apiBase == "" {
+			apiBase = "https://api.openai.com/v1"
+		}
+		if apiKey == "" {
+			apiKey = os.Getenv("OPENAI_API_KEY")
+		}
+		if model == "" {
+			model = "gpt-4o-mini"
+		}
+		return NewOpenAIProvider(apiBase, apiKey), model
+	case ProviderOllama:
+		if apiBase == "" {
+			apiBase = "http://localhost:11434"
+		}
+		if model == "" {
+			model = "llama3.2"
+		}
+		return NewOllamaProvider(apiBase), model
+	default:
+		return nil, ""
 	}
-	return NewOllamaProvider(""), "llama3.2", nil
 }

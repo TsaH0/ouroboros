@@ -18,42 +18,42 @@ import (
 
 // RepeaterModel shows an editable request form and the replay response.
 type RepeaterModel struct {
-	flow     *model.Flow
-	methodIn textinput.Model
-	urlIn    textinput.Model
+	flow      *model.Flow
+	methodIn  textinput.Model
+	urlIn     textinput.Model
 	headersIn textarea.Model
-	bodyIn   textarea.Model
-	respView viewport.Model
-	keymap   repeaterKeyMap
-	help     string
-	resp     *model.Message
+	bodyIn    textarea.Model
+	respView  viewport.Model
+	keymap    repeaterKeyMap
+	help      string
+	resp      *model.Message
+	width     int
+	height    int
+	focusIdx  int // 0=method, 1=url, 2=headers, 3=body
 }
 
 type repeaterKeyMap struct {
 	send key.Binding
 	back key.Binding
+	next key.Binding
+	prev key.Binding
 }
 
-func NewRepeaterModel(flow *model.Flow) RepeaterModel {
+func NewRepeaterModel(flow *model.Flow, width, height int) RepeaterModel {
 	methodIn := textinput.New()
 	methodIn.Placeholder = "GET"
-	methodIn.SetWidth(10)
+	methodIn.Focus()
 
 	urlIn := textinput.New()
 	urlIn.Placeholder = "https://example.com/api"
-	urlIn.SetWidth(80)
 
 	headersIn := textarea.New()
 	headersIn.Placeholder = "Content-Type: application/json"
-	headersIn.SetWidth(100)
-	headersIn.SetHeight(5)
 
 	bodyIn := textarea.New()
-	bodyIn.Placeholder = "{\"key\": \"value\"}"
-	bodyIn.SetWidth(100)
-	bodyIn.SetHeight(10)
+	bodyIn.Placeholder = `{"key": "value"}`
 
-	respView := viewport.New(viewport.WithWidth(100), viewport.WithHeight(15))
+	respView := viewport.New(viewport.WithWidth(width-2), viewport.WithHeight(height/3))
 
 	m := RepeaterModel{
 		flow:      flow,
@@ -62,11 +62,15 @@ func NewRepeaterModel(flow *model.Flow) RepeaterModel {
 		headersIn: headersIn,
 		bodyIn:    bodyIn,
 		respView:  respView,
+		width:     width,
+		height:    height,
 		keymap: repeaterKeyMap{
-			send: key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "send")),
+			send: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
 			back: key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
+			next: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+			prev: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
 		},
-		help: "ctrl+s: send  q: back",
+		help: "tab: next  shift+tab: prev  enter: send  q: back",
 	}
 
 	// Pre-fill from flow.
@@ -86,20 +90,37 @@ func (m RepeaterModel) Init() tea.Cmd {
 
 func (m RepeaterModel) Update(mgs tea.Msg) (RepeaterModel, tea.Cmd) {
 	switch v := mgs.(type) {
+	case tea.WindowSizeMsg:
+		m.width = v.Width
+		m.height = v.Height
+		m.respView.SetWidth(v.Width - 2)
+		m.respView.SetHeight(v.Height / 3)
+		return m, nil
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(v, m.keymap.back):
 			return m, func() tea.Msg { return backToListMsg{} }
+		case key.Matches(v, m.keymap.next):
+			m.focusIdx = (m.focusIdx + 1) % 4
+			m.updateFocus()
+			return m, nil
+		case key.Matches(v, m.keymap.prev):
+			m.focusIdx = (m.focusIdx + 3) % 4
+			m.updateFocus()
+			return m, nil
 		case key.Matches(v, m.keymap.send):
-			return m, func() tea.Msg {
-				return repeaterSendMsg{
-					flow: m.flow,
-					edits: repeater.Edits{
-						Method:  m.methodIn.Value(),
-						URL:     m.urlIn.Value(),
-						Headers: parseHeaders(m.headersIn.Value()),
-						Body:    []byte(m.bodyIn.Value()),
-					},
+			// Only send when focused on body (last field) and enter pressed.
+			if m.focusIdx == 3 {
+				return m, func() tea.Msg {
+					return repeaterSendMsg{
+						flow: m.flow,
+						edits: repeater.Edits{
+							Method:  m.methodIn.Value(),
+							URL:     m.urlIn.Value(),
+							Headers: parseHeaders(m.headersIn.Value()),
+							Body:    []byte(m.bodyIn.Value()),
+						},
+					}
 				}
 			}
 		}
@@ -114,35 +135,62 @@ func (m RepeaterModel) Update(mgs tea.Msg) (RepeaterModel, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *RepeaterModel) updateFocus() {
+	m.methodIn.Blur()
+	m.urlIn.Blur()
+	m.headersIn.Blur()
+	m.bodyIn.Blur()
+	switch m.focusIdx {
+	case 0:
+		m.methodIn.Focus()
+	case 1:
+		m.urlIn.Focus()
+	case 2:
+		m.headersIn.Focus()
+	case 3:
+		m.bodyIn.Focus()
+	}
+}
+
 func (m RepeaterModel) View() tea.View {
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render(" Sentinel — Repeater")
+	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
+		Width(m.width).Align(lipgloss.Center).
+		Render(" Sentinel — Repeater")
 
-	requestSection := lipgloss.NewStyle().Bold(true).Render("=== Request ===")
-	methodLine := lipgloss.NewStyle().Width(12).Render("Method:") + m.methodIn.View()
-	urlLine := lipgloss.NewStyle().Width(12).Render("URL:") + m.urlIn.View()
-	headersLine := lipgloss.NewStyle().Width(12).Render("Headers:") + "\n" + m.headersIn.View()
-	bodyLine := lipgloss.NewStyle().Width(12).Render("Body:") + "\n" + m.bodyIn.View()
+	// Request section — use half the available height.
+	reqHeight := m.height/2 - 4
 
-	responseSection := lipgloss.NewStyle().Bold(true).Render("=== Response ===")
+	methodLine := lipgloss.NewStyle().Width(10).Render("Method:") + m.methodIn.View()
+	urlLine := lipgloss.NewStyle().Width(10).Render("URL:") + m.urlIn.View()
+
+	m.headersIn.SetWidth(m.width - 14)
+	m.headersIn.SetHeight(reqHeight / 4)
+	headersLine := lipgloss.NewStyle().Width(10).Render("Headers:") + "\n" + m.headersIn.View()
+
+	m.bodyIn.SetWidth(m.width - 14)
+	m.bodyIn.SetHeight(reqHeight / 2)
+	bodyLine := lipgloss.NewStyle().Width(10).Render("Body:") + "\n" + m.bodyIn.View()
+
+	// Response section.
+	respHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("Response")
 	respContent := m.respView.View()
 	if m.resp == nil {
-		respContent = "(no response yet)"
+		respContent = "(no response yet — tab to body field, then press enter to send)"
 	}
 
 	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.help)
 
 	s := lipgloss.JoinVertical(lipgloss.Left,
 		header,
-		requestSection,
 		methodLine,
 		urlLine,
 		headersLine,
 		bodyLine,
-		responseSection,
+		respHeader,
 		respContent,
 		footer,
 	)
-	return tea.NewView(s)
+	return tea.View{Content: s, AltScreen: true}
 }
 
 // repeaterSendMsg signals the AppModel to send the replay request.
