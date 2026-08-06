@@ -1,11 +1,11 @@
 package tui
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"context"
 	"strings"
 	"testing"
 	"time"
-	tea "charm.land/bubbletea/v2"
 
 	"ouroboros/internal/model"
 	"ouroboros/internal/scope"
@@ -445,5 +445,51 @@ func TestColonCommandQuit(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal(":q should return tea.Quit command")
+	}
+}
+
+func TestHistoryScopeToggleKey(t *testing.T) {
+	st := store.NewMemoryStore()
+	sc := scope.NewManager(st)
+
+	// Seed a flow.
+	flow := &model.Flow{
+		ID:          "scope-toggle-test",
+		StartTime:   time.Now(),
+		Host:        "toggle.example.com",
+		State:       model.FlowCompleted,
+		ScopeStatus: model.ScopeUnknown,
+		Request:     &model.Message{Method: "GET", URL: "https://toggle.example.com/"},
+	}
+	if err := st.SaveFlow(context.Background(), flow); err != nil {
+		t.Fatalf("save flow: %v", err)
+	}
+
+	app := NewAppModel(st, nil, sc)
+
+	// Press 's' in history to add an include rule.
+	app.Update(appKey("s"))
+
+	// The host should now be in scope.
+	status := sc.HostStatus("toggle.example.com")
+	if status != model.ScopeInScope {
+		t.Fatalf("after first 's', status = %v, want in_scope", status)
+	}
+
+	// Find the history pane and check the scope badge updated.
+	for _, p := range app.ws.Layout().Panes() {
+		if h, ok := p.View.(*HistoryModel); ok {
+			h.RefreshScopeBadges(sc)
+			if h.rows[0][5] != "IN" {
+				t.Fatalf("scope badge = %q, want IN", h.rows[0][5])
+			}
+		}
+	}
+
+	// Press 's' again to add an exclude rule (host was in scope).
+	app.Update(appKey("s"))
+	status = sc.HostStatus("toggle.example.com")
+	if status != model.ScopeOutOfScope {
+		t.Fatalf("after second 's', status = %v, want out_of_scope", status)
 	}
 }

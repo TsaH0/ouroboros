@@ -36,6 +36,10 @@ type CommandMsg struct {
 // The application should quit in response.
 type AllClosedMsg struct{}
 
+// WaitingForWindow returns true when a Ctrl+w prefix is active
+// and the manager is waiting for the next key.
+func (m *Manager) WaitingForWindow() bool { return m.waitingForWindow }
+
 // Manager owns the layout tree and routes events to panes.
 type Manager struct {
 	layout           *Layout

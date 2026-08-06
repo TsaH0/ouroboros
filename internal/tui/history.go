@@ -10,6 +10,7 @@ import (
 
 	"ouroboros/internal/model"
 	"ouroboros/internal/msg"
+	"ouroboros/internal/scope"
 	"ouroboros/internal/store"
 	"ouroboros/internal/workspace"
 )
@@ -64,7 +65,7 @@ func (m *HistoryModel) ID() string {
 func (m *HistoryModel) Title() string { return "History" }
 func (m *HistoryModel) Init() tea.Cmd { return nil }
 func (m *HistoryModel) HelpText() string {
-	return "⏎: detail  r: repeater  a: AI  q: quit"
+	return "⏎: detail  r: repeater  a: AI  s: scope  q: quit"
 }
 func (m *HistoryModel) IsEditing() bool { return false }
 
@@ -85,6 +86,36 @@ func (m *HistoryModel) Update(mgs tea.Msg) (workspace.View, tea.Cmd) {
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(mgs)
 	return m, cmd
+}
+
+// RefreshScopeBadges recalculates the Scope column for all rows
+// using the given scope manager.
+func (m *HistoryModel) RefreshScopeBadges(sc *scope.Manager) {
+	if sc == nil || m.store == nil {
+		return
+	}
+	flows, err := m.store.ListFlows(context.Background())
+	if err != nil {
+		return
+	}
+	for i, flow := range flows {
+		if i >= len(m.rows) {
+			break
+		}
+		status := sc.HostStatus(flow.Host)
+		badge := "?"
+		switch status {
+		case model.ScopeInScope:
+			badge = "IN"
+			flow.ScopeStatus = model.ScopeInScope
+		case model.ScopeOutOfScope:
+			badge = "OUT"
+			flow.ScopeStatus = model.ScopeOutOfScope
+		}
+		m.rows[i][5] = badge
+	}
+	m.table.SetRows(m.rows)
+	m.table.UpdateViewport()
 }
 
 func (m *HistoryModel) reload() {

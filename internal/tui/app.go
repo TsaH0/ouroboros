@@ -493,6 +493,10 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 	if _, ok := focused.View.(*HistoryModel); !ok {
 		return false, nil
 	}
+	// Skip history-specific keys when a Ctrl+w prefix is active.
+	if m.ws.WaitingForWindow() {
+		return false, nil
+	}
 
 	switch {
 	case key.Matches(v, key.NewBinding(key.WithKeys("q"))):
@@ -516,15 +520,36 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 			})
 			return pane.View.Init()
 		})
-	case key.Matches(v, key.NewBinding(key.WithKeys("a"))):
-		return m.openSelectedFlow(func(flow *model.Flow) tea.Cmd {
-			llmModel := NewLLMModel(flow, m.width, m.height)
-			pane := m.ws.SplitHSplit(&llmView{
-				LLMModel: &llmModel,
-				id:       m.nextViewID("llm"),
+	case key.Matches(v, key.NewBinding(key.WithKeys("s"))):
+		// Toggle the selected flow's host scope from history.
+		focused := m.ws.FocusedPane()
+		history, ok := focused.View.(*HistoryModel)
+		if !ok {
+			return false, nil
+		}
+		flow := history.SelectedFlow()
+		if flow == nil || flow.Host == "" {
+			return true, nil
+		}
+		status := m.scopeMgr.HostStatus(flow.Host)
+		if status == model.ScopeInScope {
+			// Add exclude rule for this host.
+			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
+				Kind: scope.RuleKindHost, Pattern: flow.Host,
+				MatchMode: scope.MatchModeLiteral, Action: scope.ActionExclude,
+				Enabled: true, Priority: 100,
 			})
-			return pane.View.Init()
-		})
+		} else {
+			// Add include rule for this host.
+			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
+				Kind: scope.RuleKindHost, Pattern: flow.Host,
+				MatchMode: scope.MatchModeLiteral, Action: scope.ActionInclude,
+				Enabled: true, Priority: 100,
+			})
+		}
+		history.RefreshScopeBadges(m.scopeMgr)
+		return true, nil
+
 	}
 	return false, nil
 }
