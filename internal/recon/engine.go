@@ -3,6 +3,8 @@ package recon
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -44,9 +46,8 @@ func (e *Engine) SetDefaultTimeout(d time.Duration) {
 	e.defaultTimeout = d
 }
 
-// Run executes the full recon pipeline for a target.
-// It runs all providers concurrently, normalizes results, and returns
-// a unified ReconSummary. The context supports cancellation.
+// Run executes the recon pipeline. Independent providers run concurrently;
+// summary-aware enrichers run afterward with the normalized initial results.
 func (e *Engine) Run(ctx context.Context, target string) (*ReconSummary, error) {
 	// Check cache first.
 	if cached, ok := e.cache.Get(target); ok {
@@ -54,60 +55,110 @@ func (e *Engine) Run(ctx context.Context, target string) (*ReconSummary, error) 
 	}
 
 	var (
-		mu          sync.Mutex
-		allFindings []ReconFinding
+		mu               sync.Mutex
+		allFindings      []ReconFinding
+		providerStatuses []ProviderStatus
 	)
 
-	var wg sync.WaitGroup
+	runProviders := func(providers []ProviderMetadata) error {
+		var wg sync.WaitGroup
+		for _, pm := range providers {
+			wg.Add(1)
+			go func(meta ProviderMetadata) {
+				defer wg.Done()
 
+				timeout := e.defaultTimeout
+				if meta.Timeout > 0 {
+					timeout = time.Duration(meta.Timeout) * time.Second
+				}
+				providerCtx, cancel := context.WithTimeout(ctx, timeout)
+				defer cancel()
+
+				e.progressCh <- ProgressUpdate{Provider: meta.Provider.Name(), Status: "running"}
+
+				findings, err := meta.Provider.Run(providerCtx, target)
+				status := ProviderStatus{
+					Name:     meta.Provider.Name(),
+					Role:     meta.Role,
+					Status:   "done",
+					Findings: len(findings),
+				}
+				if err != nil {
+					status.Status = "error"
+					status.Error = err.Error()
+				}
+
+				mu.Lock()
+				providerStatuses = append(providerStatuses, status)
+				if err == nil {
+					allFindings = append(allFindings, findings...)
+				}
+				mu.Unlock()
+
+				e.progressCh <- ProgressUpdate{
+					Provider: meta.Provider.Name(),
+					Status:   status.Status,
+					Error:    err,
+				}
+			}(pm)
+		}
+
+		doneCh := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(doneCh)
+		}()
+
+		select {
+		case <-doneCh:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	var initial, deferred []ProviderMetadata
 	for _, pm := range e.providers {
-		wg.Add(1)
-		go func(meta ProviderMetadata) {
-			defer wg.Done()
-
-			providerCtx := ctx
-			timeout := e.defaultTimeout
-			if meta.Timeout > 0 {
-				timeout = time.Duration(meta.Timeout) * time.Second
-			}
-			var cancel context.CancelFunc
-			providerCtx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
-
-			e.progressCh <- ProgressUpdate{Provider: meta.Provider.Name(), Status: "running"}
-
-			findings, err := meta.Provider.Run(providerCtx, target)
-			if err != nil {
-				e.progressCh <- ProgressUpdate{Provider: meta.Provider.Name(), Status: "error", Error: err}
-				// Non-fatal: continue with other providers.
-				return
-			}
-
-			mu.Lock()
-			allFindings = append(allFindings, findings...)
-			mu.Unlock()
-
-			e.progressCh <- ProgressUpdate{Provider: meta.Provider.Name(), Status: "done"}
-		}(pm)
+		if _, ok := pm.Provider.(SummaryAwareProvider); ok {
+			deferred = append(deferred, pm)
+		} else {
+			initial = append(initial, pm)
+		}
 	}
 
-	// Wait for all providers or cancellation.
-	doneCh := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(doneCh)
-	}()
-
-	select {
-	case <-doneCh:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := runProviders(initial); err != nil {
+		return nil, err
 	}
 
-	// Normalize findings into summary.
+	initialSummary := normalizeFindings(target, allFindings)
+	for _, pm := range deferred {
+		pm.Provider.(SummaryAwareProvider).Prepare(initialSummary)
+	}
+	if err := runProviders(deferred); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(providerStatuses, func(i, j int) bool {
+		return providerStatuses[i].Name < providerStatuses[j].Name
+	})
+
 	summary := normalizeFindings(target, allFindings)
-	e.cache.Set(target, summary)
+	summary.Providers = providerStatuses
 
+	var failures []string
+	for _, status := range providerStatuses {
+		if status.Status == "error" {
+			failures = append(failures, status.Name+": "+status.Error)
+		}
+	}
+	if len(providerStatuses) == 0 {
+		return summary, fmt.Errorf("no recon providers configured")
+	}
+	if len(failures) == len(providerStatuses) {
+		return summary, fmt.Errorf("all recon providers failed: %s", strings.Join(failures, "; "))
+	}
+
+	e.cache.Set(target, summary)
 	return summary, nil
 }
 

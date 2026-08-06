@@ -2,6 +2,8 @@ package recon
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -208,6 +210,53 @@ func (m *mockProvider) Run(ctx context.Context, target string) ([]ReconFinding, 
 	}
 }
 
+type mockSummaryAwareProvider struct {
+	prepared []Technology
+}
+
+func (m *mockSummaryAwareProvider) Name() string { return "summary-aware" }
+
+func (m *mockSummaryAwareProvider) Prepare(summary *ReconSummary) {
+	m.prepared = append([]Technology(nil), summary.Technologies...)
+}
+
+func (m *mockSummaryAwareProvider) Run(context.Context, string) ([]ReconFinding, error) {
+	if len(m.prepared) == 0 {
+		return nil, fmt.Errorf("missing technologies")
+	}
+	return []ReconFinding{{
+		Type:       "vulnerability",
+		Source:     SourceSearchSploit,
+		Title:      "Known exploit for " + m.prepared[0].Name,
+		ExploitRef: "exploits/example.txt",
+	}}, nil
+}
+
+func TestEngine_DefersSummaryAwareProviders(t *testing.T) {
+	enricher := &mockSummaryAwareProvider{}
+	engine := NewEngine(NewCache(), DefaultCommandRunner{}, []ProviderMetadata{
+		{Provider: &mockProvider{name: "technology", findings: []ReconFinding{{
+			Type:       "technology",
+			Source:     SourceWhatWeb,
+			Value:      "example.com",
+			Technology: "Apache",
+			Version:    "2.4.41",
+		}}}, Role: RoleEnrichment},
+		{Provider: enricher, Role: RoleEnrichment},
+	})
+
+	summary, err := engine.Run(context.Background(), "example.com")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(enricher.prepared) != 1 || enricher.prepared[0].Name != "Apache" {
+		t.Fatalf("prepared technologies = %#v", enricher.prepared)
+	}
+	if summary.VulnCount() != 1 {
+		t.Fatalf("vulnerabilities = %d, want 1", summary.VulnCount())
+	}
+}
+
 func TestEngine_RunBasic(t *testing.T) {
 	providers := []ProviderMetadata{
 		{Provider: &mockProvider{name: "p1", delay: 10 * time.Millisecond, findings: []ReconFinding{
@@ -309,6 +358,31 @@ func TestEngine_ProviderErrorNonFatal(t *testing.T) {
 	}
 	if summary.HostCount() != 1 {
 		t.Fatalf("host count = %d, want 1 (failed provider should be non-fatal)", summary.HostCount())
+	}
+}
+
+func TestEngine_AllProvidersFailReturnsDiagnostics(t *testing.T) {
+	cache := NewCache()
+	engine := NewEngine(cache, DefaultCommandRunner{}, []ProviderMetadata{
+		{Provider: &mockProvider{name: "missing-a", err: context.DeadlineExceeded}, Role: RoleDiscovery},
+		{Provider: &mockProvider{name: "missing-b", err: context.Canceled}, Role: RoleEnrichment},
+	})
+
+	summary, err := engine.Run(context.Background(), "example.com")
+	if err == nil {
+		t.Fatal("expected all-provider failure")
+	}
+	if summary == nil {
+		t.Fatal("expected summary with provider diagnostics")
+	}
+	if len(summary.Providers) != 2 {
+		t.Fatalf("provider statuses = %d, want 2", len(summary.Providers))
+	}
+	if !strings.Contains(err.Error(), "missing-a") || !strings.Contains(err.Error(), "missing-b") {
+		t.Fatalf("error does not name failed providers: %v", err)
+	}
+	if cache.Size() != 0 {
+		t.Fatal("all-failed result must not be cached")
 	}
 }
 

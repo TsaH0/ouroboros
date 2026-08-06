@@ -72,6 +72,7 @@ History view:
 | `enter` | Open selected flow detail |
 | `r` | Open selected flow in Repeater |
 | `a` | Open selected flow in LLM analysis |
+| `5` | Open Recon Intelligence Workspace |
 | `q` / `ctrl+c` | Quit |
 
 Repeater view:
@@ -85,6 +86,35 @@ Repeater view:
 | Insert | `esc` | Return to normal mode |
 | Insert | `tab` / `shift+tab` | Move to next/previous request field |
 | Insert | `s` / `F5` / `ctrl+j` | Send replay request |
+
+
+Recon workspace:
+
+Sentinel invokes local reconnaissance CLI tools; it does not bundle or start
+them as services. Install the tools and ensure they are in `PATH` before
+running Recon:
+
+```sh
+# Arch Linux with BlackArch repositories enabled
+sudo pacman -S subfinder gau waybackurls whatweb exploitdb
+
+# Verify every provider is available
+which subfinder gau waybackurls whatweb searchsploit
+```
+
+Portable Go installs for the discovery providers:
+
+```sh
+go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+go install github.com/lc/gau/v2/cmd/gau@latest
+go install github.com/tomnomnom/waybackurls@latest
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
+Press `5` from History, enter an authorized target domain, then press `enter`.
+The Summary tab reports each provider as `done` or `error` and includes its
+finding count. `tab` / `shift+tab` changes tabs, `j` / `k` scrolls, `a` runs
+AI prioritization, and `q` / `esc` returns to History.
 
 LLM analysis:
 

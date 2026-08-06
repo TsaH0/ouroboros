@@ -21,6 +21,13 @@ type ReconProvider interface {
 	Run(ctx context.Context, target string) ([]ReconFinding, error)
 }
 
+// SummaryAwareProvider is deferred until initial providers finish, then
+// receives their normalized output before it runs.
+type SummaryAwareProvider interface {
+	ReconProvider
+	Prepare(summary *ReconSummary)
+}
+
 // CommandRunner executes external commands with a timeout.
 // This avoids hardcoding exec.Command throughout the application.
 type CommandRunner interface {

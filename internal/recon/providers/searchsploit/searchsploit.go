@@ -3,6 +3,7 @@ package searchsploit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"sentinel/internal/recon"
@@ -19,6 +20,11 @@ type Provider struct {
 
 func (p *Provider) Name() string { return "searchsploit" }
 
+// Prepare supplies technologies detected by earlier enrichment providers.
+func (p *Provider) Prepare(summary *recon.ReconSummary) {
+	p.Technologies = append(p.Technologies[:0], summary.Technologies...)
+}
+
 func (p *Provider) Run(ctx context.Context, target string) ([]recon.ReconFinding, error) {
 	r := p.Runner
 	if r == nil {
@@ -27,13 +33,15 @@ func (p *Provider) Run(ctx context.Context, target string) ([]recon.ReconFinding
 
 	// Collect unique technology queries.
 	searchTerms := p.collectSearchTerms()
+	if len(searchTerms) == 0 {
+		return nil, fmt.Errorf("no detected technologies to search")
+	}
 
 	var findings []recon.ReconFinding
 	for _, term := range searchTerms {
 		out, err := r.Run(ctx, "searchsploit", []string{"--json", term})
 		if err != nil {
-			// searchsploit returns non-zero if no results, non-fatal.
-			continue
+			return nil, fmt.Errorf("search %q: %w", term, err)
 		}
 		findings = append(findings, parseSearchSploitOutput(string(out))...)
 	}

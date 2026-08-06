@@ -194,11 +194,11 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 
 	case reconResultMsg:
 		m.loading = false
-		if v.err != nil {
-			m.err = v.err
+		m.err = v.err
+		m.summary = v.summary
+		if m.summary == nil {
 			m.viewport.SetContent(fmt.Sprintf("Recon failed: %v\n\nPress q to go back.", v.err))
 		} else {
-			m.summary = v.summary
 			m.tab = reconTabSummary
 			m.refreshViewport()
 		}
@@ -292,7 +292,7 @@ func (m ReconModel) renderTab() string {
 	}
 	switch m.tab {
 	case reconTabSummary:
-		return renderReconSummary(m.summary)
+		return renderReconSummary(m.summary, m.err)
 	case reconTabHosts:
 		return renderReconHosts(m.summary)
 	case reconTabEndpoints:
@@ -307,10 +307,17 @@ func (m ReconModel) renderTab() string {
 	return ""
 }
 
-func renderReconSummary(s *recon.ReconSummary) string {
+func renderReconSummary(s *recon.ReconSummary, runErr error) string {
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Recon Summary"))
 	b.WriteString("\n\n")
+	if runErr != nil {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).
+			Render("Recon could not collect results"))
+		b.WriteString("\n")
+		b.WriteString(runErr.Error())
+		b.WriteString("\n\n")
+	}
 	b.WriteString(fmt.Sprintf("Target:       %s\n", s.Target))
 	b.WriteString(fmt.Sprintf("Hosts:        %d\n", s.HostCount()))
 	b.WriteString(fmt.Sprintf("Endpoints:    %d (%d interesting)\n", s.EndpointCount(), len(s.InterestingEndpoints())))
@@ -318,6 +325,18 @@ func renderReconSummary(s *recon.ReconSummary) string {
 	b.WriteString(fmt.Sprintf("Vulns:        %d\n", s.VulnCount()))
 	b.WriteString(fmt.Sprintf("Created:      %s\n", s.CreatedAt.Format("2006-01-02 15:04:05")))
 
+	if len(s.Providers) > 0 {
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Provider Status"))
+		b.WriteString("\n")
+		for _, provider := range s.Providers {
+			b.WriteString(fmt.Sprintf("  [%s] %s — %d findings", provider.Status, provider.Name, provider.Findings))
+			if provider.Error != "" {
+				b.WriteString(": " + provider.Error)
+			}
+			b.WriteString("\n")
+		}
+	}
 	interesting := s.InterestingEndpoints()
 	if len(interesting) > 0 {
 		b.WriteString("\n")

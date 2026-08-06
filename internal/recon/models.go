@@ -72,14 +72,24 @@ type Vulnerability struct {
 	Source     Source `json:"source"`
 }
 
+// ProviderStatus records the outcome of one provider execution.
+type ProviderStatus struct {
+	Name     string       `json:"name"`
+	Role     ProviderRole `json:"role"`
+	Status   string       `json:"status"`
+	Findings int          `json:"findings"`
+	Error    string       `json:"error,omitempty"`
+}
+
 // ReconSummary is the unified output of the recon pipeline.
 type ReconSummary struct {
-	Target          string          `json:"target"`
-	Hosts           []Host          `json:"hosts"`
-	Endpoints       []Endpoint      `json:"endpoints"`
-	Technologies    []Technology    `json:"technologies"`
-	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
-	CreatedAt       time.Time       `json:"created_at"`
+	Target          string           `json:"target"`
+	Hosts           []Host           `json:"hosts"`
+	Endpoints       []Endpoint       `json:"endpoints"`
+	Technologies    []Technology     `json:"technologies"`
+	Vulnerabilities []Vulnerability  `json:"vulnerabilities"`
+	Providers       []ProviderStatus `json:"providers"`
+	CreatedAt       time.Time        `json:"created_at"`
 }
 
 // SortedEndpoints returns endpoints sorted by descending score.

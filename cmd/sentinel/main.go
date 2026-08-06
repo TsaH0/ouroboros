@@ -19,6 +19,7 @@ import (
 	"sentinel/internal/proxy"
 	"sentinel/internal/recon"
 	"sentinel/internal/recon/providers/gau"
+	"sentinel/internal/recon/providers/searchsploit"
 	"sentinel/internal/recon/providers/subfinder"
 	"sentinel/internal/recon/providers/wayback"
 	"sentinel/internal/recon/providers/whatweb"
@@ -82,6 +83,7 @@ func main() {
 		{Provider: &gau.Provider{Runner: reconRunner}, Role: recon.RoleDiscovery, Timeout: 60},
 		{Provider: &wayback.Provider{Runner: reconRunner}, Role: recon.RoleDiscovery, Timeout: 60},
 		{Provider: &whatweb.Provider{Runner: reconRunner}, Role: recon.RoleEnrichment, Timeout: 30},
+		{Provider: &searchsploit.Provider{Runner: reconRunner}, Role: recon.RoleEnrichment, Timeout: 30},
 	}
 	reconEngine := recon.NewEngine(reconCache, reconRunner, reconProviders)
 	app.SetReconEngine(reconEngine)

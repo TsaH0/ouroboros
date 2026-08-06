@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"sentinel/internal/recon"
 	"sentinel/internal/store"
 )
 
@@ -26,5 +29,30 @@ func TestAppReconTypingDoesNotBlock(t *testing.T) {
 	}
 	if elapsed > 100*time.Millisecond {
 		t.Fatalf("typing blocked the event loop for %s", elapsed)
+	}
+}
+
+func TestRenderReconSummaryShowsProviderFailures(t *testing.T) {
+	summary := &recon.ReconSummary{
+		Target: "example.com",
+		Providers: []recon.ProviderStatus{
+			{
+				Name:   "subfinder",
+				Status: "error",
+				Error:  "executable file not found in PATH",
+			},
+		},
+	}
+
+	rendered := renderReconSummary(summary, errors.New("all recon providers failed"))
+	for _, want := range []string{
+		"Recon could not collect results",
+		"Provider Status",
+		"[error] subfinder",
+		"executable file not found in PATH",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered summary missing %q:\n%s", want, rendered)
+		}
 	}
 }
