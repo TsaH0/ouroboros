@@ -106,8 +106,16 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	case backToListMsg:
 		if m.ws != nil {
 			m.ws.CloseFocused()
+			if m.ws.Layout() == nil {
+				m.quitting = true
+				return m, tea.Quit
+			}
 		}
 		return m, nil
+
+	case workspace.AllClosedMsg:
+		m.quitting = true
+		return m, tea.Quit
 
 	case workspace.CommandMsg:
 		return m, m.handleWorkspaceCommand(v)

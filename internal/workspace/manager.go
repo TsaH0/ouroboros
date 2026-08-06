@@ -32,6 +32,10 @@ type CommandMsg struct {
 	Action Command
 }
 
+// AllClosedMsg is emitted when the last pane is closed, leaving no panes.
+// The application should quit in response.
+type AllClosedMsg struct{}
+
 // Manager owns the layout tree and routes events to panes.
 type Manager struct {
 	layout           *Layout
@@ -323,6 +327,9 @@ func (m *Manager) handleKeyPress(v tea.KeyPressMsg) tea.Cmd {
 			}
 		case key.Matches(v, key.NewBinding(key.WithKeys("c"))):
 			m.CloseFocused()
+			if m.layout == nil {
+				return func() tea.Msg { return AllClosedMsg{} }
+			}
 			return nil
 		case key.Matches(v, key.NewBinding(key.WithKeys("o"))):
 			m.CloseAllButFocused()

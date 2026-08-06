@@ -1,6 +1,10 @@
 package workspace
 
-import "strings"
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
 
 // LayoutKind describes how a layout arranges its children.
 type LayoutKind int
@@ -83,7 +87,14 @@ func (l *Layout) Resize(width, height int) {
 		if l.Pane != nil {
 			l.Pane.Width = width
 			l.Pane.Height = height
-			l.Pane.View.Resize(width-2, height-2)
+			vw, vh := width-2, height-2
+			if vw < 1 {
+				vw = 1
+			}
+			if vh < 1 {
+				vh = 1
+			}
+			l.Pane.View.Resize(vw, vh)
 		}
 	case LayoutHSplit:
 		leftW := int(float64(width) * l.Weight)
@@ -157,11 +168,11 @@ func joinHorizontal(left, right string) string {
 		rightLines = append(rightLines, "")
 	}
 
-	// Find max width of left side.
+	// Find max visual width of left side (ANSI-aware).
 	leftWidth := 0
 	for _, line := range leftLines {
-		if len(line) > leftWidth {
-			leftWidth = len(line)
+		if w := lipgloss.Width(line); w > leftWidth {
+			leftWidth = w
 		}
 	}
 
@@ -169,9 +180,9 @@ func joinHorizontal(left, right string) string {
 	for i := 0; i < maxLines; i++ {
 		l := leftLines[i]
 		r := rightLines[i]
-		// Pad left line to leftWidth.
-		if len(l) < leftWidth {
-			l += strings.Repeat(" ", leftWidth-len(l))
+		// Pad left line to leftWidth (visual width).
+		if pad := leftWidth - lipgloss.Width(l); pad > 0 {
+			l += strings.Repeat(" ", pad)
 		}
 		result = append(result, l+r)
 	}

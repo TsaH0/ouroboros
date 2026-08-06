@@ -21,13 +21,20 @@ func (p *Pane) Render() string {
 	content := p.View.View()
 	innerWidth := p.Width - 2
 	innerHeight := p.Height - 2
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
 
-	// Truncate or pad content to fit.
+	// Truncate or pad content to fit. Use lipgloss.Width for visual width
+	// (ANSI codes and multi-byte runes inflate byte length).
 	lines := strings.Split(content, "\n")
 	var fitted []string
 	for _, line := range lines {
-		if len(line) > innerWidth {
-			line = line[:innerWidth]
+		if lipgloss.Width(line) > innerWidth {
+			line = lipgloss.NewStyle().MaxWidth(innerWidth).Render(line)
 		}
 		fitted = append(fitted, line)
 	}
@@ -47,10 +54,14 @@ func (p *Pane) Render() string {
 	if title != "" {
 		titleStr := fmt.Sprintf(" %s ", title)
 		maxTitleLen := innerWidth - 2
-		if len(titleStr) > maxTitleLen {
-			titleStr = titleStr[:maxTitleLen]
+		if lipgloss.Width(titleStr) > maxTitleLen {
+			titleStr = lipgloss.NewStyle().MaxWidth(maxTitleLen).Render(titleStr)
 		}
-		topBorder = "┌" + titleStr + strings.Repeat("─", innerWidth-len(titleStr)) + "┐"
+		padLen := innerWidth - lipgloss.Width(titleStr)
+		if padLen < 0 {
+			padLen = 0
+		}
+		topBorder = "┌" + titleStr + strings.Repeat("─", padLen) + "┐"
 	}
 	if p.Focused {
 		topBorder = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(topBorder)
@@ -70,8 +81,9 @@ func (p *Pane) Render() string {
 		}
 		b.WriteString(side)
 		b.WriteString(line)
-		if len(line) < innerWidth {
-			b.WriteString(strings.Repeat(" ", innerWidth-len(line)))
+		padLen := innerWidth - lipgloss.Width(line)
+		if padLen > 0 {
+			b.WriteString(strings.Repeat(" ", padLen))
 		}
 		b.WriteString(side)
 		b.WriteString("\n")

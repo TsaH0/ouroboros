@@ -10,6 +10,7 @@ import (
 	"ouroboros/internal/model"
 	"ouroboros/internal/scope"
 	"ouroboros/internal/store"
+	"ouroboros/internal/workspace"
 )
 
 func appKey(text string) tea.KeyPressMsg {
@@ -202,5 +203,73 @@ func TestGlobalKeyOpensScopeFromDetail(t *testing.T) {
 	}
 	if _, ok := app.ws.FocusedPane().View.(*scopeView); !ok {
 		t.Fatalf("focused view = %T, want *scopeView", app.ws.FocusedPane().View)
+	}
+}
+
+func TestCtrlWCQuitsOnLastPane(t *testing.T) {
+	st := store.NewMemoryStore()
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// Only one pane (history). Ctrl+w c should produce AllClosedMsg.
+	app.Update(ctrlKey('w'))
+	_, cmd := app.Update(appKey("c"))
+	if cmd == nil {
+		t.Fatal("ctrl+w c on last pane should return a command")
+	}
+
+	// The command should emit AllClosedMsg.
+	msg := cmd()
+	if _, ok := msg.(workspace.AllClosedMsg); !ok {
+		t.Fatalf("expected workspace.AllClosedMsg, got %T", msg)
+	}
+
+	// AppModel should quit when receiving AllClosedMsg.
+	updated, quitCmd := app.Update(msg)
+	if quitCmd == nil {
+		t.Fatal("AllClosedMsg should trigger tea.Quit")
+	}
+	if !updated.(*AppModel).quitting {
+		t.Fatal("AllClosedMsg should set quitting=true")
+	}
+}
+
+func TestBackToListQuitsOnLastPane(t *testing.T) {
+	st := store.NewMemoryStore()
+	flow := &model.Flow{
+		ID:          "test-flow",
+		StartTime:   time.Now(),
+		Host:        "example.com",
+		State:       model.FlowCompleted,
+		ScopeStatus: model.ScopeInScope,
+		Request:     &model.Message{Method: "GET", URL: "https://example.com/"},
+	}
+	if err := st.SaveFlow(context.Background(), flow); err != nil {
+		t.Fatalf("save flow: %v", err)
+	}
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// Open detail from history (2 panes).
+	app.Update(appKey("enter"))
+	if len(app.ws.Layout().Panes()) != 2 {
+		t.Fatalf("pane count = %d, want 2", len(app.ws.Layout().Panes()))
+	}
+
+	// Close detail with backToListMsg. Should go back to 1 pane.
+	updated, _ := app.Update(backToListMsg{})
+	app = updated.(*AppModel)
+	if len(app.ws.Layout().Panes()) != 1 {
+		t.Fatalf("pane count after first close = %d, want 1", len(app.ws.Layout().Panes()))
+	}
+
+	// Close the last pane (history) with backToListMsg. Should quit.
+	updated, quitCmd := app.Update(backToListMsg{})
+	app = updated.(*AppModel)
+	if quitCmd == nil {
+		t.Fatal("closing last pane should trigger tea.Quit")
+	}
+	if !app.quitting {
+		t.Fatal("closing last pane should set quitting=true")
 	}
 }
