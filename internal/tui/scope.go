@@ -143,6 +143,7 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 		case key.Matches(v, m.keymap.add):
 			m.adding = true
 			m.addStep = 0
+			m.err = ""
 			m.addRule = scope.Rule{
 				Action:    scope.ActionInclude,
 				Kind:      scope.RuleKindHost,
@@ -151,7 +152,7 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 				Enabled:   true,
 			}
 			m.input.SetValue("")
-			m.input.Placeholder = "action: include or exclude"
+			m.input.Placeholder = "include or exclude"
 			m.input.Focus()
 			return m, textinput.Blink
 
@@ -276,12 +277,13 @@ func (m *ScopeModel) updateAddFlow(v tea.KeyPressMsg) (ScopeModel, tea.Cmd) {
 			} else if val == "exclude" || val == "e" {
 				m.addRule.Action = scope.ActionExclude
 			} else {
-				m.err = "invalid action (include/exclude)"
+				m.err = "type 'include' (i) or 'exclude' (e)"
 				return *m, nil
 			}
+			m.err = ""
 			m.addStep = 1
 			m.input.SetValue("")
-			m.input.Placeholder = "kind: host, path, or url"
+			m.input.Placeholder = "host, path, or url"
 			return *m, textinput.Blink
 
 		case 1: // kind
@@ -294,12 +296,13 @@ func (m *ScopeModel) updateAddFlow(v tea.KeyPressMsg) (ScopeModel, tea.Cmd) {
 			case "url", "u":
 				m.addRule.Kind = scope.RuleKindURL
 			default:
-				m.err = "invalid kind (host/path/url)"
+				m.err = "type 'host' (h), 'path' (p), or 'url' (u)"
 				return *m, nil
 			}
+			m.err = ""
 			m.addStep = 2
 			m.input.SetValue("")
-			m.input.Placeholder = "pattern (e.g. *.example.com)"
+			m.input.Placeholder = "e.g. *.example.com  or  re:https://..."
 			return *m, textinput.Blink
 
 		case 2: // pattern
@@ -317,9 +320,10 @@ func (m *ScopeModel) updateAddFlow(v tea.KeyPressMsg) (ScopeModel, tea.Cmd) {
 			} else {
 				m.addRule.MatchMode = scope.MatchModeLiteral
 			}
+			m.err = ""
 			m.addStep = 3
 			m.input.SetValue("10")
-			m.input.Placeholder = "priority (higher = first)"
+			m.input.Placeholder = "number (higher = first)"
 			return *m, textinput.Blink
 
 		case 3: // priority
@@ -331,6 +335,7 @@ func (m *ScopeModel) updateAddFlow(v tea.KeyPressMsg) (ScopeModel, tea.Cmd) {
 			if err != nil {
 				m.err = err.Error()
 			} else {
+				m.err = ""
 				m.rules = m.manager.Rules()
 				m.refreshTable()
 			}
@@ -388,31 +393,52 @@ func (m *ScopeModel) refreshTable() {
 func (m ScopeModel) View() tea.View {
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
 		Width(m.width).Align(lipgloss.Center).
-		Render(" Ouroboros - Scope Management")
+		Render(" Ouroboros - Scope")
 
+	var prompt string
 	var body string
 	if m.adding {
-		body = m.input.View()
+		switch m.addStep {
+		case 0:
+			prompt = "Step 1/4 — Action: type 'include' (i) or 'exclude' (e)"
+		case 1:
+			prompt = "Step 2/4 — Kind: type 'host' (h), 'path' (p), or 'url' (u)"
+		case 2:
+			prompt = "Step 3/4 — Pattern: type host/path/URL. Use * or ? for wildcard, prefix re: for regex"
+		case 3:
+			prompt = "Step 4/4 — Priority: type a number (higher = evaluated first)"
+		}
+		body = lipgloss.JoinVertical(lipgloss.Left,
+			prompt,
+			"> "+m.input.View(),
+			"enter: confirm  esc: cancel",
+		)
 	} else if m.searching {
-		body = "/ " + m.search.View()
+		body = lipgloss.JoinVertical(lipgloss.Left,
+			"Search: type to filter rules",
+			"/ "+m.search.View(),
+			"enter: done  esc: cancel",
+		)
 	} else {
 		body = m.table.View()
 	}
 
 	var help string
-	if m.adding {
-		help = "enter: confirm  esc: cancel"
-	} else if m.searching {
-		help = "enter: done  esc: cancel"
-	} else {
-		help = "a:add  d:delete  space:toggle  /:search  i:import host  I:import all  q:back"
+	if !m.adding && !m.searching {
+		help = "a:add  d:del  space:toggle  /:search  i:import  I:import all  q:back"
 	}
 
 	var errLine string
 	if m.err != "" {
-		errLine = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.err)
+		errLine = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("⚠ " + m.err)
 	}
 
-	sections := []string{header, body, help, errLine}
+	sections := []string{header, body}
+	if help != "" {
+		sections = append(sections, help)
+	}
+	if errLine != "" {
+		sections = append(sections, errLine)
+	}
 	return tea.View{Content: lipgloss.JoinVertical(lipgloss.Left, sections...), AltScreen: true}
 }
