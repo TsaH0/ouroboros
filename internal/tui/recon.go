@@ -62,21 +62,21 @@ type reconAIResultMsg struct {
 
 // ReconModel is the TUI model for the Recon Intelligence Workspace.
 type ReconModel struct {
-	engine   *recon.Engine
-	analyzer *llm.Analyzer
-	target   textinput.Model
-	summary  *recon.ReconSummary
-	aiResult *llm.ReconAnalysisResult
+	engine    *recon.Engine
+	analyzer  *llm.Analyzer
+	target    textinput.Model
+	summary   *recon.ReconSummary
+	aiResult  *llm.ReconAnalysisResult
 	progress  *recon.ProgressUpdate
 	loading   bool
 	aiLoading bool
 	tab       reconTab
-	spinner  spinner.Model
-	viewport viewport.Model
-	keymap   reconKeyMap
-	width    int
-	height   int
-	err      error
+	spinner   spinner.Model
+	viewport  viewport.Model
+	keymap    reconKeyMap
+	width     int
+	height    int
+	err       error
 }
 
 // NewReconModel creates a new ReconModel.
@@ -208,7 +208,6 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 		m.progress = &v
 		return m, nil
 
-
 	case reconAIResultMsg:
 		m.aiLoading = false
 		if v.err != nil {
@@ -258,9 +257,12 @@ func (m ReconModel) View() tea.View {
 	var body string
 	switch {
 	case m.loading:
-		progTxt := "running providers..."
+		progTxt := "starting providers..."
 		if m.progress != nil {
-			progTxt = fmt.Sprintf("running %s...", m.progress.Provider)
+			progTxt = fmt.Sprintf("%s: %s", m.progress.Provider, m.progress.Status)
+			if m.progress.Error != nil {
+				progTxt += " — " + m.progress.Error.Error()
+			}
 		}
 		body = m.spinner.View() + " " + progTxt
 	case m.aiLoading:

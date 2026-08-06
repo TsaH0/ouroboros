@@ -108,9 +108,6 @@ func (e *Engine) Run(ctx context.Context, target string) (*ReconSummary, error) 
 	summary := normalizeFindings(target, allFindings)
 	e.cache.Set(target, summary)
 
-	// Close progress channel after all providers finished.
-	close(e.progressCh)
-
 	return summary, nil
 }
 

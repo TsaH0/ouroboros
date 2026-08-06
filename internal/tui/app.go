@@ -33,26 +33,27 @@ const (
 
 // AppModel is the top-level Bubble Tea model for the Sentinel TUI.
 type AppModel struct {
-	store          *store.InMemoryFlowStore
-	proxy          *proxy.Proxy
-	repeaterSvc    repeater.Service
-	llmAnalyzer    *llm.Analyzer
-	reconMgr       *recon.Engine
-	mode           Mode
-	table          table.Model
-	help           help.Model
-	keymap         appKeyMap
-	quitting       bool
-	rows           []table.Row
-	detail         *DetailModel
-	repeater       *RepeaterModel
-	llm            *LLMModel
-	recon          *ReconModel
-	llmContext     []llm.Message
-	lastBulkResult *llm.BulkAnalysisResult
-	width          int
-	height         int
-	ready          bool
+	store                  *store.InMemoryFlowStore
+	proxy                  *proxy.Proxy
+	repeaterSvc            repeater.Service
+	llmAnalyzer            *llm.Analyzer
+	reconMgr               *recon.Engine
+	reconProgressListening bool
+	mode                   Mode
+	table                  table.Model
+	help                   help.Model
+	keymap                 appKeyMap
+	quitting               bool
+	rows                   []table.Row
+	detail                 *DetailModel
+	repeater               *RepeaterModel
+	llm                    *LLMModel
+	recon                  *ReconModel
+	llmContext             []llm.Message
+	lastBulkResult         *llm.BulkAnalysisResult
+	width                  int
+	height                 int
+	ready                  bool
 }
 
 type appKeyMap struct {
@@ -124,6 +125,24 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForReconProgress(m.reconMgr.ProgressChan())
 		}
 		return m, nil
+	case reconRunMsg:
+		run := func() tea.Msg {
+			summary, err := m.reconMgr.Run(context.Background(), v.target)
+			return reconResultMsg{summary: summary, err: err}
+		}
+		if !m.reconProgressListening {
+			m.reconProgressListening = true
+			return m, tea.Batch(run, waitForReconProgress(m.reconMgr.ProgressChan()))
+		}
+		return m, run
+	case reconAIAnalyzeMsg:
+		return m, func() tea.Msg {
+			if m.llmAnalyzer == nil {
+				return reconAIResultMsg{err: fmt.Errorf("no LLM configured")}
+			}
+			result, err := m.llmAnalyzer.AnalyzeRecon(context.Background(), v.summary)
+			return reconAIResultMsg{result: result, err: err}
+		}
 	}
 
 	// Delegate to sub-models based on mode.
@@ -229,31 +248,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		if m.recon != nil {
 			updated, reconCmd := m.recon.Update(mgs)
 			m.recon = &updated
-			if reconCmd != nil {
-				cmdMsg := reconCmd()
-				switch v := cmdMsg.(type) {
-				case backToListMsg:
-					m.mode = ModeHistory
-					m.recon = nil
-				case reconRunMsg:
-					return m, tea.Batch(
-						func() tea.Msg {
-							summary, err := m.reconMgr.Run(context.Background(), v.target)
-							return reconResultMsg{summary: summary, err: err}
-						},
-						waitForReconProgress(m.reconMgr.ProgressChan()),
-					)
-				case reconAIAnalyzeMsg:
-					return m, func() tea.Msg {
-						if m.llmAnalyzer == nil {
-							return reconAIResultMsg{err: fmt.Errorf("no LLM configured")}
-						}
-						result, err := m.llmAnalyzer.AnalyzeRecon(context.Background(), v.summary)
-						return reconAIResultMsg{result: result, err: err}
-					}
-				}
-			}
-			return m, nil
+			return m, reconCmd
 		}
 	}
 

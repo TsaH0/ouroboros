@@ -260,6 +260,21 @@ func TestEngine_CacheHitSkipsProviders(t *testing.T) {
 	}
 }
 
+func TestEngine_CanRunDifferentTargetsSequentially(t *testing.T) {
+	providers := []ProviderMetadata{
+		{Provider: &mockProvider{name: "p1", findings: []ReconFinding{
+			{Type: "host", Source: SourceSubfinder, Value: "sub.example.com"},
+		}}, Role: RoleDiscovery, Timeout: 5},
+	}
+	engine := NewEngine(NewCache(), DefaultCommandRunner{}, providers)
+
+	for _, target := range []string{"first.example", "second.example"} {
+		if _, err := engine.Run(context.Background(), target); err != nil {
+			t.Fatalf("run %q: %v", target, err)
+		}
+	}
+}
+
 func TestEngine_Cancellation(t *testing.T) {
 	providers := []ProviderMetadata{
 		{Provider: &mockProvider{name: "slow", delay: 5 * time.Second, findings: []ReconFinding{
