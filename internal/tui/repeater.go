@@ -34,12 +34,13 @@ type RepeaterModel struct {
 }
 
 type repeaterKeyMap struct {
-	send key.Binding
-	back key.Binding
-	next key.Binding
-	prev key.Binding
-	edit key.Binding
-	done key.Binding
+	send     key.Binding
+	sendEdit key.Binding
+	back     key.Binding
+	next     key.Binding
+	prev     key.Binding
+	edit     key.Binding
+	done     key.Binding
 }
 
 func NewRepeaterModel(flow *model.Flow, width, height int) RepeaterModel {
@@ -67,12 +68,13 @@ func NewRepeaterModel(flow *model.Flow, width, height int) RepeaterModel {
 		width:     width,
 		height:    height,
 		keymap: repeaterKeyMap{
-			send: key.NewBinding(key.WithKeys("s", "f5", "ctrl+j"), key.WithHelp("s/f5", "send")),
-			back: key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
-			next: key.NewBinding(key.WithKeys("j", "down", "tab"), key.WithHelp("j/tab", "next")),
-			prev: key.NewBinding(key.WithKeys("k", "up", "shift+tab"), key.WithHelp("k", "prev")),
-			edit: key.NewBinding(key.WithKeys("i", "enter"), key.WithHelp("i/enter", "edit")),
-			done: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "normal")),
+			send:     key.NewBinding(key.WithKeys("enter", "s", "f5", "ctrl+j"), key.WithHelp("enter/s/f5", "send")),
+			sendEdit: key.NewBinding(key.WithKeys("s", "f5", "ctrl+j"), key.WithHelp("s/f5", "send")),
+			back:     key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
+			next:     key.NewBinding(key.WithKeys("j", "down", "tab"), key.WithHelp("j/tab", "next")),
+			prev:     key.NewBinding(key.WithKeys("k", "up", "shift+tab"), key.WithHelp("k", "prev")),
+			edit:     key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "edit")),
+			done:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "normal")),
 		},
 	}
 
@@ -106,7 +108,7 @@ func (m RepeaterModel) Update(mgs tea.Msg) (RepeaterModel, tea.Cmd) {
 				m.editing = false
 				m.updateFocus()
 				return m, nil
-			case key.Matches(v, m.keymap.send):
+			case key.Matches(v, m.keymap.sendEdit):
 				return m, m.sendCmd()
 			case key.Matches(v, m.keymap.next):
 				m.focusIdx = (m.focusIdx + 1) % 4
@@ -243,10 +245,10 @@ func (m RepeaterModel) View() tea.View {
 	}
 	respContent := m.respView.View()
 	if m.resp == nil && m.respErr == nil {
-		respContent = "(no response yet — press s or F5 from normal mode to send)"
+		respContent = "(no response yet — press enter, s, F5, or ctrl+j from normal mode to send)"
 	}
 
-	help := "NORMAL: j/k/tab move  i/enter edit  s/f5 send  q back | INSERT: esc normal  tab next  s/f5 send"
+	help := "NORMAL: j/k/tab move  i edit  enter/s/f5 send  q back | INSERT: esc normal  tab next  s/f5 send"
 	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MaxWidth(width).Render(help)
 
 	s := lipgloss.JoinVertical(lipgloss.Left,
