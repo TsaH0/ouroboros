@@ -463,7 +463,7 @@ func TestHistoryScopeToggleKey(t *testing.T) {
 	flow := &model.Flow{
 		ID:          "scope-toggle-test",
 		StartTime:   time.Now(),
-		Host:        "toggle.example.com",
+		Host:        "toggle.example.com:443",
 		State:       model.FlowCompleted,
 		ScopeStatus: model.ScopeInScope,
 		Request:     &model.Message{Method: "GET", URL: "https://toggle.example.com/"},

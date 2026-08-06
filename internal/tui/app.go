@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
@@ -333,9 +334,14 @@ func (m *AppModel) importSelectedFlowAsScope() (bool, tea.Cmd) {
 	if flow == nil || flow.Host == "" {
 		return false, nil
 	}
+	// Strip port from host — scope rules match hostname only.
+	host := flow.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
 	_, err := m.scopeMgr.AddRule(context.Background(), scope.Rule{
 		Kind:      scope.RuleKindHost,
-		Pattern:   flow.Host,
+		Pattern:   host,
 		MatchMode: scope.MatchModeLiteral,
 		Action:    scope.ActionInclude,
 		Enabled:   true,
@@ -531,24 +537,28 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		if flow == nil || flow.Host == "" {
 			return true, nil
 		}
+		// Strip port from host — scope rules match hostname only.
+		host := flow.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
 		// Check current status BEFORE removing old rules.
-		status := m.scopeMgr.HostStatus(flow.Host)
-
+		status := m.scopeMgr.HostStatus(host)
 		// Remove any existing literal host rules for this host
 		// so the toggle is clean (no conflicting duplicates).
-		m.scopeMgr.RemoveHostRules(context.Background(), flow.Host)
+		m.scopeMgr.RemoveHostRules(context.Background(), host)
 
 		if status == model.ScopeInScope {
 			// Was in scope (via wildcard default) → add explicit exclude.
 			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
-				Kind: scope.RuleKindHost, Pattern: flow.Host,
+				Kind: scope.RuleKindHost, Pattern: host,
 				MatchMode: scope.MatchModeLiteral, Action: scope.ActionExclude,
 				Enabled: true, Priority: 100,
 			})
 		} else {
 			// Was out of scope or unknown → add explicit include.
 			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
-				Kind: scope.RuleKindHost, Pattern: flow.Host,
+				Kind: scope.RuleKindHost, Pattern: host,
 				MatchMode: scope.MatchModeLiteral, Action: scope.ActionInclude,
 				Enabled: true, Priority: 100,
 			})

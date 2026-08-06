@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
@@ -209,13 +210,14 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 				m.err = "no captured flow host available"
 				return m, nil
 			}
+			host := flows[len(flows)-1].Host
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
 			_, err = m.manager.AddRule(context.Background(), scope.Rule{
 				Kind:      scope.RuleKindHost,
-				Pattern:   flows[len(flows)-1].Host,
+				Pattern:   host,
 				MatchMode: scope.MatchModeLiteral,
-				Action:    scope.ActionInclude,
-				Enabled:   true,
-				Priority:  10,
 			})
 			if err != nil {
 				m.err = err.Error()
@@ -235,13 +237,20 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 			}
 			seen := make(map[string]bool)
 			for _, f := range flows {
-				if f.Host == "" || seen[f.Host] {
+				if f.Host == "" {
 					continue
 				}
-				seen[f.Host] = true
+				host := f.Host
+				if h, _, err := net.SplitHostPort(host); err == nil {
+					host = h
+				}
+				if seen[host] {
+					continue
+				}
+				seen[host] = true
 				_, err := m.manager.AddRule(context.Background(), scope.Rule{
 					Kind:      scope.RuleKindHost,
-					Pattern:   f.Host,
+					Pattern:   host,
 					MatchMode: scope.MatchModeLiteral,
 					Action:    scope.ActionInclude,
 					Enabled:   true,
