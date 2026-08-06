@@ -3,12 +3,19 @@ package repeater
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"time"
 
 	"ouroboros/internal/model"
+	"ouroboros/internal/scope"
 )
+
+// ErrOutOfScope is returned when the target URL is not in scope.
+var ErrOutOfScope = errors.New("target is out of scope")
 
 // Edits holds user-modified fields for replaying a request.
 type Edits struct {
@@ -21,40 +28,54 @@ type Edits struct {
 // Service replays captured flows with optional modifications.
 type Service interface {
 	Replay(ctx context.Context, flow *model.Flow, edits Edits) (*model.Message, error)
+	ReplayOverride(ctx context.Context, flow *model.Flow, edits Edits) (*model.Message, error)
 }
 
 // HTTPService is the concrete implementation using net/http.
 type HTTPService struct {
 	client *http.Client
+	scope  scope.Service
 }
 
-func NewHTTPService() *HTTPService {
+// NewHTTPService creates a new HTTPService with an optional scope checker.
+// If sc is nil, scope enforcement is disabled.
+func NewHTTPService(sc scope.Service) *HTTPService {
 	return &HTTPService{
 		client: &http.Client{
-			Transport: &http.Transport{
-				DisableCompression: true,
-			},
+			Timeout: 30 * time.Second,
 		},
+		scope: sc,
 	}
 }
 
 func (s *HTTPService) Replay(ctx context.Context, flow *model.Flow, edits Edits) (*model.Message, error) {
-	method := edits.Method
-	if method == "" {
-		if flow.Request != nil {
-			method = flow.Request.Method
-		} else {
-			method = http.MethodGet
+	if s.scope != nil {
+		target := edits.URL
+		if target == "" && flow.Request != nil {
+			target = flow.Request.URL
+		}
+		if u, err := url.Parse(target); err == nil {
+			if st := s.scope.Status(u); st != model.ScopeInScope {
+				return nil, ErrOutOfScope
+			}
 		}
 	}
+	return s.replay(ctx, flow, edits)
+}
 
-	url := edits.URL
-	if url == "" {
-		if flow.Request != nil {
-			url = flow.Request.URL
-		} else {
-			return nil, fmt.Errorf("no URL provided and flow has no request")
-		}
+func (s *HTTPService) ReplayOverride(ctx context.Context, flow *model.Flow, edits Edits) (*model.Message, error) {
+	return s.replay(ctx, flow, edits)
+}
+
+func (s *HTTPService) replay(ctx context.Context, flow *model.Flow, edits Edits) (*model.Message, error) {
+	method := edits.Method
+	if method == "" && flow.Request != nil {
+		method = flow.Request.Method
+	}
+
+	urlStr := edits.URL
+	if urlStr == "" && flow.Request != nil {
+		urlStr = flow.Request.URL
 	}
 
 	body := edits.Body
@@ -62,15 +83,13 @@ func (s *HTTPService) Replay(ctx context.Context, flow *model.Flow, edits Edits)
 		body = flow.Request.Body
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	for k, vals := range edits.Headers {
-		for _, v := range vals {
-			req.Header.Add(k, v)
-		}
+		req.Header[k] = vals
 	}
 	if req.Header.Get("Content-Length") == "" && len(body) > 0 {
 		req.ContentLength = int64(len(body))
@@ -88,17 +107,18 @@ func (s *HTTPService) Replay(ctx context.Context, flow *model.Flow, edits Edits)
 	}
 
 	return &model.Message{
-		Method:      method,
-		URL:         url,
-		HTTPVersion: formatHTTPVersion(resp.ProtoMajor, resp.ProtoMinor),
 		StatusCode:  resp.StatusCode,
+		HTTPVersion: formatHTTPVersion(resp.ProtoMajor, resp.ProtoMinor),
 		Headers:     cloneHeaders(resp.Header),
 		Body:        respBody,
 	}, nil
 }
 
 func formatHTTPVersion(major, minor int) string {
-	if major == 1 && minor == 1 {
+	if major == 1 {
+		if minor == 0 {
+			return "HTTP/1.0"
+		}
 		return "HTTP/1.1"
 	}
 	if major == 2 {

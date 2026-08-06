@@ -43,7 +43,8 @@ A terminal web-security workbench for HTTP history inspection, interception, rep
 - **Proxy Engine** — HTTP/HTTPS intercepting forward proxy (Milestone 1+)
 - **Domain** — Core models (Flow, Message), scope evaluation, intercept rules
 - **Services** — Business logic decoupled from UI and transport
-- **Store** — Persistence abstraction (in-memory now, SQLite later)
+- **Store** — Persistence abstraction (MemoryStore, SQLiteStore with WAL and migrations)
+- **Scope** — Include/exclude rules with wildcard, regex, and priority support
 - **TUI** — Bubble Tea v2 terminal interface
 
 ## Build
@@ -74,6 +75,7 @@ History view:
 | `r` | Open selected flow in Repeater |
 | `a` | Open selected flow in LLM analysis |
 | `5` | Open Recon Intelligence Workspace |
+| `4` | Open Scope Management |
 | `q` / `ctrl+c` | Quit |
 
 Repeater view:
@@ -146,3 +148,4 @@ In the TUI, select a captured flow, press `a`, then press `a` again in the LLM v
 - **Milestone 3** — Intercept mode: pause flows for modification, forward/drop controls (✓ done)
 - **Milestone 4** — Repeater: resend captured requests with editable payloads (✓ done)
 - **Milestone 5** — LLM integration: AI-assisted analysis of intercepted traffic (✓ done)
+- **Milestone 6** — Persistent Storage + Scope Management: SQLite persistence with WAL, migrations, scope rules with include/exclude/wildcard/regex/priority, scope enforcement in Repeater/Recon/AI, Scope Management TUI screen, history scope badges (✓ done)

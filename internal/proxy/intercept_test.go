@@ -23,13 +23,17 @@ func TestInterceptForward(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	flowStore := store.NewInMemoryFlowStore()
-	sc := scope.NewMatcher([]scope.Rule{{Allow: true, Host: regexp.MustCompile(`.*`)}})
+	flowStore := store.NewMemoryStore()
+	scopeMgr := scope.NewManager(nil)
+	scopeMgr.AddRule(context.Background(), scope.Rule{
+		Kind: scope.RuleKindHost, Pattern: "*", MatchMode: scope.MatchModeWildcard,
+		Action: scope.ActionInclude, Enabled: true, Priority: 0,
+	})
 	is := intercept.NewMatcher([]intercept.Rule{
 		{Allow: true, Host: regexp.MustCompile(`.*`)},
 	})
 
-	pxy := New(flowStore, nil, sc, is)
+	pxy := New(flowStore, nil, scopeMgr, is)
 	pxy.transport = http.DefaultTransport
 
 	proxyServer := httptest.NewServer(pxy)
@@ -44,7 +48,7 @@ func TestInterceptForward(t *testing.T) {
 	// The flow should be intercepted. We need to unblock it.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		flows, _ := flowStore.List(context.Background())
+		flows, _ := flowStore.ListFlows(context.Background())
 		for _, f := range flows {
 			if f.State == "intercepted" {
 				pxy.HandleInterceptCommand(msg.ForwardInterceptedFlow{FlowID: f.ID})
@@ -72,13 +76,17 @@ func TestInterceptDrop(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	flowStore := store.NewInMemoryFlowStore()
-	sc := scope.NewMatcher([]scope.Rule{{Allow: true, Host: regexp.MustCompile(`.*`)}})
+	flowStore := store.NewMemoryStore()
+	scopeMgr := scope.NewManager(nil)
+	scopeMgr.AddRule(context.Background(), scope.Rule{
+		Kind: scope.RuleKindHost, Pattern: "*", MatchMode: scope.MatchModeWildcard,
+		Action: scope.ActionInclude, Enabled: true, Priority: 0,
+	})
 	is := intercept.NewMatcher([]intercept.Rule{
 		{Allow: true, Host: regexp.MustCompile(`.*`)},
 	})
 
-	pxy := New(flowStore, nil, sc, is)
+	pxy := New(flowStore, nil, scopeMgr, is)
 	pxy.transport = http.DefaultTransport
 
 	proxyServer := httptest.NewServer(pxy)
@@ -92,7 +100,7 @@ func TestInterceptDrop(t *testing.T) {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		flows, _ := flowStore.List(context.Background())
+		flows, _ := flowStore.ListFlows(context.Background())
 		for _, f := range flows {
 			if f.State == "intercepted" {
 				pxy.HandleInterceptCommandDrop(msg.DropInterceptedFlow{FlowID: f.ID})

@@ -29,7 +29,7 @@ func TestHTTPService_Replay_Passthrough(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	svc := NewHTTPService()
+	svc := NewHTTPService(nil)
 	flow := &model.Flow{
 		Request: &model.Message{
 			Method:      http.MethodPost,
@@ -71,7 +71,7 @@ func TestHTTPService_Replay_WithEdits(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	svc := NewHTTPService()
+	svc := NewHTTPService(nil)
 	flow := &model.Flow{
 		Request: &model.Message{
 			Method: http.MethodPost,
@@ -95,7 +95,7 @@ func TestHTTPService_Replay_WithEdits(t *testing.T) {
 }
 
 func TestHTTPService_Replay_NoURL(t *testing.T) {
-	svc := NewHTTPService()
+	svc := NewHTTPService(nil)
 	flow := &model.Flow{}
 	_, err := svc.Replay(context.Background(), flow, Edits{})
 	if err == nil {

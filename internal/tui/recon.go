@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -13,7 +14,9 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"ouroboros/internal/llm"
+	"ouroboros/internal/model"
 	"ouroboros/internal/recon"
+	"ouroboros/internal/scope"
 )
 
 // reconTab selects which data view to display.
@@ -64,6 +67,7 @@ type reconAIResultMsg struct {
 type ReconModel struct {
 	engine    *recon.Engine
 	analyzer  *llm.Analyzer
+	scopeSvc  scope.Service
 	target    textinput.Model
 	summary   *recon.ReconSummary
 	aiResult  *llm.ReconAnalysisResult
@@ -77,10 +81,11 @@ type ReconModel struct {
 	width     int
 	height    int
 	err       error
+	scopeBlocked bool
 }
 
 // NewReconModel creates a new ReconModel.
-func NewReconModel(engine *recon.Engine, analyzer *llm.Analyzer, width, height int) ReconModel {
+func NewReconModel(engine *recon.Engine, analyzer *llm.Analyzer, sc scope.Service, width, height int) ReconModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
@@ -95,6 +100,7 @@ func NewReconModel(engine *recon.Engine, analyzer *llm.Analyzer, width, height i
 	return ReconModel{
 		engine:   engine,
 		analyzer: analyzer,
+		scopeSvc: sc,
 		target:   ti,
 		spinner:  sp,
 		viewport: vp,
@@ -171,6 +177,26 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 		}
 
 		// No results yet — target input is active.
+		if m.scopeBlocked {
+			switch {
+			case key.Matches(v, key.NewBinding(key.WithKeys("y", "Y"))):
+				m.scopeBlocked = false
+				target := strings.TrimSpace(m.target.Value())
+				if target == "" {
+					return m, nil
+				}
+				m.loading = true
+				m.progress = nil
+				return m, tea.Batch(
+					m.spinner.Tick,
+					func() tea.Msg { return reconRunMsg{target: target} },
+				)
+			case key.Matches(v, key.NewBinding(key.WithKeys("n", "N", "esc"))):
+				m.scopeBlocked = false
+				return m, nil
+			}
+			return m, nil
+		}
 		switch {
 		case key.Matches(v, m.keymap.back):
 			return m, func() tea.Msg { return backToListMsg{} }
@@ -178,6 +204,13 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 			target := strings.TrimSpace(m.target.Value())
 			if target == "" {
 				return m, nil
+			}
+			if m.scopeSvc != nil {
+				u := &url.URL{Scheme: "https", Host: target}
+				if st := m.scopeSvc.Status(u); st != model.ScopeInScope {
+					m.scopeBlocked = true
+					return m, nil
+				}
 			}
 			m.loading = true
 			m.progress = nil
@@ -260,11 +293,13 @@ func (m ReconModel) View() tea.View {
 		if m.progress != nil {
 			progTxt = fmt.Sprintf("%s: %s", m.progress.Provider, m.progress.Status)
 			if m.progress.Error != nil {
-				progTxt += " — " + m.progress.Error.Error()
+				progTxt += " - " + m.progress.Error.Error()
 			}
 		}
 		body = m.spinner.View() + " " + progTxt
-	case m.aiLoading:
+	case m.scopeBlocked:
+		body = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render("OUT OF SCOPE — press Y to run anyway, N to cancel")
+	case m.summary != nil:
 		body = m.spinner.View() + " AI analyzing..."
 	case m.summary == nil:
 		input := lipgloss.NewStyle().Margin(1, 0).Render("Target: " + m.target.View())
@@ -293,7 +328,7 @@ func (m ReconModel) renderTab() string {
 	case reconTabSummary:
 		return renderReconSummary(m.summary, m.err)
 	case reconTabHosts:
-		return renderReconHosts(m.summary)
+		return renderReconHosts(m.summary, m.scopeSvc)
 	case reconTabEndpoints:
 		return renderReconEndpoints(m.summary)
 	case reconTabTech:
@@ -357,7 +392,7 @@ func renderReconSummary(s *recon.ReconSummary, runErr error) string {
 	return b.String()
 }
 
-func renderReconHosts(s *recon.ReconSummary) string {
+func renderReconHosts(s *recon.ReconSummary, sc scope.Service) string {
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Hosts (%d)", s.HostCount())))
 	b.WriteString("\n\n")
@@ -366,11 +401,21 @@ func renderReconHosts(s *recon.ReconSummary) string {
 		return b.String()
 	}
 	for _, h := range s.Hosts {
+		badge := "?"
+		if sc != nil {
+			u := &url.URL{Scheme: "https", Host: h.Hostname}
+			switch sc.Status(u) {
+			case model.ScopeInScope:
+				badge = "IN"
+			case model.ScopeOutOfScope:
+				badge = "OUT"
+			}
+		}
 		srcs := make([]string, len(h.Sources))
 		for i, src := range h.Sources {
 			srcs[i] = string(src)
 		}
-		b.WriteString(fmt.Sprintf("  %s  [%s]\n", h.Hostname, strings.Join(srcs, ", ")))
+		b.WriteString(fmt.Sprintf("  [%s] %s  [%s]\n", badge, h.Hostname, strings.Join(srcs, ", ")))
 	}
 	return b.String()
 }

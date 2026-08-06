@@ -11,8 +11,8 @@ import (
 )
 
 func TestAppReconTypingDoesNotBlock(t *testing.T) {
-	app := NewAppModel(store.NewInMemoryFlowStore(), nil)
-	reconModel := NewReconModel(nil, nil, 100, 40)
+	app := NewAppModel(store.NewMemoryStore(), nil, nil)
+	reconModel := NewReconModel(nil, nil, nil, 100, 40)
 	app.mode = ModeRecon
 	app.recon = &reconModel
 

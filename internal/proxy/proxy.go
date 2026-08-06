@@ -41,7 +41,7 @@ type InterceptResult struct {
 
 // Proxy is an HTTP intercepting forward proxy.
 type Proxy struct {
-	store        *store.InMemoryFlowStore
+	store        store.Store
 	program      *tea.Program
 	scope        scope.Service
 	interceptSvc intercept.Service
@@ -50,7 +50,7 @@ type Proxy struct {
 	ca           *CACert
 }
 
-func New(s *store.InMemoryFlowStore, p *tea.Program, sc scope.Service, is intercept.Service) *Proxy {
+func New(s store.Store, p *tea.Program, sc scope.Service, is intercept.Service) *Proxy {
 	return &Proxy{
 		store:        s,
 		program:      p,
@@ -111,12 +111,16 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		Request:    reqMsg,
 		State:      model.FlowPending,
 	}
+	if p.scope != nil {
+		u := &url.URL{Scheme: "http", Host: r.Host, Path: r.URL.Path}
+		flow.ScopeStatus = p.scope.Status(u)
+	}
 	p.sendEvent(msg.FlowStarted{Flow: flow})
 
 	// Check intercept.
 	if p.interceptSvc != nil && p.interceptSvc.Evaluate(flow) {
 		flow.State = model.FlowIntercepted
-		_ = p.store.Save(context.Background(), flow)
+		_ = p.store.SaveFlow(context.Background(), flow)
 		p.sendEvent(msg.InterceptionRequired{FlowID: flow.ID})
 
 		ch := make(chan InterceptResult, 1)
@@ -218,6 +222,10 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		Host:       host,
 		State:      model.FlowPending,
 	}
+	if p.scope != nil {
+		u := &url.URL{Scheme: "https", Host: host}
+		flow.ScopeStatus = p.scope.Status(u)
+	}
 	p.sendEvent(msg.FlowStarted{Flow: flow})
 
 	u := &url.URL{Scheme: "https", Host: host}
@@ -300,7 +308,7 @@ func (p *Proxy) finalizeFlow(flow *model.Flow, resp *model.Message) {
 	if flow.Duration == 0 {
 		flow.Duration = time.Since(flow.StartTime)
 	}
-	_ = p.store.Save(context.Background(), flow)
+	_ = p.store.SaveFlow(context.Background(), flow)
 	p.sendEvent(msg.FlowCompleted{Flow: flow})
 }
 

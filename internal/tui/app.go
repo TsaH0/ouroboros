@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -14,9 +16,11 @@ import (
 
 	"ouroboros/internal/llm"
 	"ouroboros/internal/msg"
+	"ouroboros/internal/model"
 	"ouroboros/internal/proxy"
 	"ouroboros/internal/recon"
 	"ouroboros/internal/repeater"
+	"ouroboros/internal/scope"
 	"ouroboros/internal/store"
 )
 
@@ -29,11 +33,12 @@ const (
 	ModeRepeater
 	ModeLLM
 	ModeRecon
+	ModeScope
 )
 
 // AppModel is the top-level Bubble Tea model for the Ouroboros TUI.
 type AppModel struct {
-	store                  *store.InMemoryFlowStore
+	store                  store.Store
 	proxy                  *proxy.Proxy
 	repeaterSvc            repeater.Service
 	llmAnalyzer            *llm.Analyzer
@@ -49,6 +54,8 @@ type AppModel struct {
 	repeater               *RepeaterModel
 	llm                    *LLMModel
 	recon                  *ReconModel
+	scope                  *ScopeModel
+	scopeMgr               *scope.Manager
 	llmContext             []llm.Message
 	lastBulkResult         *llm.BulkAnalysisResult
 	width                  int
@@ -62,6 +69,7 @@ type appKeyMap struct {
 	repeater key.Binding
 	llm      key.Binding
 	recon    key.Binding
+	scope    key.Binding
 }
 
 // backToListMsg signals a sub-view to return to the history list.
@@ -100,10 +108,16 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		m.repeater = nil
 		m.llm = nil
 		m.recon = nil
+		m.scope = nil
 		return m, nil
 	case repeaterResultMsg:
 		if m.repeater != nil {
 			setRepeaterResponse(m.repeater, v.resp, v.err)
+		}
+		return m, nil
+	case repeaterScopeBlockMsg:
+		if m.repeater != nil {
+			m.repeater.scopeBlocked = true
 		}
 		return m, nil
 	case reconResultMsg:
@@ -140,7 +154,12 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			if m.llmAnalyzer == nil {
 				return reconAIResultMsg{err: fmt.Errorf("no LLM configured")}
 			}
-			result, err := m.llmAnalyzer.AnalyzeRecon(context.Background(), v.summary)
+			// Filter to in-scope assets by default.
+			summary := v.summary
+			if m.scopeMgr != nil {
+				summary = filterReconInScope(summary, m.scopeMgr)
+			}
+			result, err := m.llmAnalyzer.AnalyzeRecon(context.Background(), summary)
 			return reconAIResultMsg{result: result, err: err}
 		}
 	}
@@ -194,6 +213,9 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 				case repeaterSendMsg:
 					return m, func() tea.Msg {
 						resp, err := m.repeaterSvc.Replay(context.Background(), v.flow, v.edits)
+						if errors.Is(err, repeater.ErrOutOfScope) {
+							return repeaterScopeBlockMsg{}
+						}
 						return repeaterResultMsg{resp: resp, err: err}
 					}
 				}
@@ -216,7 +238,17 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 							if m.llmAnalyzer == nil {
 								return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, GEMINI_API_KEY, or run Ollama)")}
 							}
-							flows, _ := m.store.List(context.Background())
+							flows, _ := m.store.ListFlows(context.Background())
+							// Filter to in-scope flows by default.
+							if m.scopeMgr != nil {
+								var inScope []*model.Flow
+								for _, f := range flows {
+									if f.ScopeStatus == model.ScopeInScope {
+										inScope = append(inScope, f)
+									}
+								}
+								flows = inScope
+							}
 							result, err := m.llmAnalyzer.AnalyzeBulk(context.Background(), flows)
 							if err == nil {
 								m.lastBulkResult = result
@@ -250,6 +282,12 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			m.recon = &updated
 			return m, reconCmd
 		}
+	case ModeScope:
+		if m.scope != nil {
+			updated, scopeCmd := m.scope.Update(mgs)
+			m.scope = &updated
+			return m, scopeCmd
+		}
 	}
 
 	switch v := mgs.(type) {
@@ -271,7 +309,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			row := m.table.SelectedRow()
 			if row != nil {
 				shortID := row[0]
-				flows, _ := m.store.List(context.Background())
+				flows, _ := m.store.ListFlows(context.Background())
 				for _, f := range flows {
 					if len(f.ID) >= 8 && f.ID[len(f.ID)-8:] == shortID {
 						detail := NewDetailModel(f, m.width, m.height)
@@ -285,7 +323,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			row := m.table.SelectedRow()
 			if row != nil {
 				shortID := row[0]
-				flows, _ := m.store.List(context.Background())
+				flows, _ := m.store.ListFlows(context.Background())
 				for _, f := range flows {
 					if len(f.ID) >= 8 && f.ID[len(f.ID)-8:] == shortID {
 						r := NewRepeaterModel(f, m.width, m.height)
@@ -302,9 +340,15 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			m.llm = &l
 		case key.Matches(v, m.keymap.recon):
 			if m.reconMgr != nil {
-				r := NewReconModel(m.reconMgr, m.llmAnalyzer, m.width, m.height)
+				r := NewReconModel(m.reconMgr, m.llmAnalyzer, m.scopeMgr, m.width, m.height)
 				m.mode = ModeRecon
 				m.recon = &r
+			}
+		case key.Matches(v, m.keymap.scope):
+			if m.scopeMgr != nil {
+				sc := NewScopeModel(m.scopeMgr, m.store, m.width, m.height)
+				m.mode = ModeScope
+				m.scope = &sc
 			}
 		}
 
@@ -321,12 +365,20 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		if flow.Response != nil {
 			status = flow.Response.StatusCode
 		}
+		scopeBadge := "?"
+		switch flow.ScopeStatus {
+		case model.ScopeInScope:
+			scopeBadge = "IN"
+		case model.ScopeOutOfScope:
+			scopeBadge = "OUT"
+		}
 		row := table.Row{
 			flow.ID[len(flow.ID)-8:],
 			method,
 			host,
 			path,
 			strconv.Itoa(status),
+			scopeBadge,
 			fmt.Sprintf("%dms", flow.Duration.Milliseconds()),
 			flow.StartTime.Format("15:04:05"),
 		}
@@ -336,7 +388,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case msg.InterceptionRequired:
-		flow, err := m.store.Get(nil, v.FlowID)
+		flow, err := m.store.GetFlow(nil, v.FlowID)
 		if err != nil || flow == nil {
 			return m, nil
 		}
@@ -358,6 +410,29 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(mgs)
 	return m, cmd
+}
+
+// filterReconInScope returns a copy of the summary containing only in-scope hosts and endpoints.
+func filterReconInScope(s *recon.ReconSummary, sc *scope.Manager) *recon.ReconSummary {
+	if s == nil || sc == nil {
+		return s
+	}
+	filtered := *s
+	filtered.Hosts = make([]recon.Host, 0, len(s.Hosts))
+	for _, h := range s.Hosts {
+		u := &url.URL{Scheme: "https", Host: h.Hostname}
+		if sc.Status(u) == model.ScopeInScope {
+			filtered.Hosts = append(filtered.Hosts, h)
+		}
+	}
+	filtered.Endpoints = make([]recon.Endpoint, 0, len(s.Endpoints))
+	for _, e := range s.Endpoints {
+		u, err := url.Parse(e.URL)
+		if err == nil && sc.Status(u) == model.ScopeInScope {
+			filtered.Endpoints = append(filtered.Endpoints, e)
+		}
+	}
+	return &filtered
 }
 
 // buildBulkContext converts a bulk analysis result into LLM conversation
@@ -415,13 +490,14 @@ func (m AppModel) View() tea.View {
 }
 
 // NewAppModel creates a new AppModel.
-func NewAppModel(s *store.InMemoryFlowStore, p *proxy.Proxy) *AppModel {
+func NewAppModel(s store.Store, p *proxy.Proxy, sc *scope.Manager) *AppModel {
 	cols := []table.Column{
 		{Title: "ID", Width: 10},
 		{Title: "Method", Width: 8},
 		{Title: "Host", Width: 20},
 		{Title: "Path", Width: 30},
 		{Title: "Status", Width: 8},
+		{Title: "Scope", Width: 6},
 		{Title: "Time", Width: 8},
 		{Title: "Timestamp", Width: 10},
 	}
@@ -434,7 +510,8 @@ func NewAppModel(s *store.InMemoryFlowStore, p *proxy.Proxy) *AppModel {
 	return &AppModel{
 		store:       s,
 		proxy:       p,
-		repeaterSvc: repeater.NewHTTPService(),
+		scopeMgr:    sc,
+		repeaterSvc: repeater.NewHTTPService(sc),
 		mode:        ModeHistory,
 		table:       t,
 		help:        help.New(),
@@ -444,6 +521,7 @@ func NewAppModel(s *store.InMemoryFlowStore, p *proxy.Proxy) *AppModel {
 			repeater: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "repeater")),
 			llm:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "analyze")),
 			recon:    key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "recon")),
+			scope:    key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "scope")),
 		},
 	}
 }

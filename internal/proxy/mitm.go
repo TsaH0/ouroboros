@@ -118,7 +118,7 @@ func (p *Proxy) mitmConnect(w http.ResponseWriter, r *http.Request, flow *model.
 		// Check intercept.
 		if p.interceptSvc != nil && p.interceptSvc.Evaluate(subFlow) {
 			subFlow.State = model.FlowIntercepted
-			_ = p.store.Save(context.Background(), subFlow)
+			_ = p.store.SaveFlow(context.Background(), subFlow)
 			p.sendEvent(msg.InterceptionRequired{FlowID: subFlow.ID})
 
 			ch := make(chan InterceptResult, 1)

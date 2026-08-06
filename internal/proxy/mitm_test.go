@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"regexp"
 	"testing"
 	"time"
 
@@ -30,10 +29,19 @@ func TestHTTPSMITMFramesBufferedResponse(t *testing.T) {
 		t.Fatalf("generate CA: %v", err)
 	}
 
-	flowStore := store.NewInMemoryFlowStore()
-	proxyHandler := New(flowStore, nil, scope.NewMatcher([]scope.Rule{
-		{Allow: true, Host: regexp.MustCompile(`.*`)},
-	}), nil)
+	flowStore := store.NewMemoryStore()
+	// Create a scope manager with an allow-all rule.
+	scopeMgr := scope.NewManager(nil)
+	scopeMgr.AddRule(context.Background(), scope.Rule{
+		Kind:      scope.RuleKindHost,
+		Pattern:   "*",
+		MatchMode: scope.MatchModeWildcard,
+		Action:    scope.ActionInclude,
+		Enabled:   true,
+		Priority:  0,
+	})
+
+	proxyHandler := New(flowStore, nil, scopeMgr, nil)
 	proxyHandler.SetCA(ca)
 	proxyHandler.transport = upstream.Client().Transport
 
@@ -73,7 +81,7 @@ func TestHTTPSMITMFramesBufferedResponse(t *testing.T) {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	flows, err := flowStore.List(context.Background())
+	flows, err := flowStore.ListFlows(context.Background())
 	if err != nil {
 		t.Fatalf("list flows: %v", err)
 	}

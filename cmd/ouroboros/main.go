@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -35,6 +35,8 @@ func main() {
 	apiBase := flag.String("api-base", "", "LLM API base URL (e.g. https://integrate.api.nvidia.com/v1)")
 	apiKey := flag.String("api-key", "", "LLM API key (defaults to $NVIDIA_API_KEY, $GEMINI_API_KEY, or $OPENAI_API_KEY)")
 	model := flag.String("model", "", "LLM model name (e.g. poolside/laguna-xs-2.1, gemini-2.5-flash)")
+	dbPath := flag.String("db", "", "SQLite database path (default: ~/.config/ouroboros/ouroboros.db)")
+	memory := flag.Bool("memory", false, "Use in-memory store instead of SQLite")
 	flag.Parse()
 
 	if *installCA {
@@ -48,17 +50,57 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Initialize store and scope.
-	s := store.NewInMemoryFlowStore()
-	sc := scope.NewMatcher([]scope.Rule{
-		{Allow: true, Host: regexp.MustCompile(`.*`)},
-	})
+	// Initialize store.
+	var st store.Store
+	if *memory {
+		st = store.NewMemoryStore()
+	} else {
+		path := *dbPath
+		if path == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				log.Fatalf("home dir: %v", err)
+			}
+			dir := filepath.Join(home, ".config", "ouroboros")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				log.Fatalf("create config dir: %v", err)
+			}
+			path = filepath.Join(dir, "ouroboros.db")
+		}
+		sqlStore, err := store.NewSQLiteStore(path)
+		if err != nil {
+			log.Fatalf("open database: %v", err)
+		}
+		st = sqlStore
+	}
+	defer st.Close()
+
+	// Initialize scope manager.
+	scopeMgr := scope.NewManager(st)
+	if err := scopeMgr.Load(ctx); err != nil {
+		log.Printf("warning: load scope rules: %v", err)
+	}
+	// Seed a default allow-all rule if no rules exist.
+	if len(scopeMgr.Rules()) == 0 {
+		_, err := scopeMgr.AddRule(ctx, scope.Rule{
+			Kind:      scope.RuleKindHost,
+			Pattern:   "*",
+			MatchMode: scope.MatchModeWildcard,
+			Action:    scope.ActionInclude,
+			Enabled:   true,
+			Priority:  0,
+			Note:      "default allow-all",
+		})
+		if err != nil {
+			log.Printf("warning: seed default scope rule: %v", err)
+		}
+	}
 
 	// Initialize intercept service (intercept nothing by default).
 	is := intercept.NewMatcher(nil)
 
 	// Initialize proxy.
-	pxy := proxy.New(s, nil, sc, is)
+	pxy := proxy.New(st, nil, scopeMgr, is)
 
 	// Load or generate CA for MITM.
 	ca, err := proxy.LoadOrGenerateCA()
@@ -68,8 +110,8 @@ func main() {
 		pxy.SetCA(ca)
 	}
 
-	// Initialize TUI with store and proxy reference.
-	app := tui.NewAppModel(s, pxy)
+	// Initialize TUI with store, proxy, and scope manager.
+	app := tui.NewAppModel(st, pxy, scopeMgr)
 	p := tea.NewProgram(app, tea.WithContext(ctx))
 
 	// Wire the program into the proxy so it can send events.
@@ -109,7 +151,6 @@ func main() {
 		pt = llm.ProviderOllama
 	case "nvidia":
 		pt = llm.ProviderOpenAI
-		// NVIDIA NIM uses an OpenAI-compatible API.
 		if *apiBase == "" {
 			*apiBase = "https://integrate.api.nvidia.com/v1"
 		}

@@ -18,19 +18,20 @@ import (
 
 // RepeaterModel shows an editable request form and the replay response.
 type RepeaterModel struct {
-	flow      *model.Flow
-	methodIn  textinput.Model
-	urlIn     textinput.Model
-	headersIn textarea.Model
-	bodyIn    textarea.Model
-	respView  viewport.Model
-	keymap    repeaterKeyMap
-	resp      *model.Message
-	respErr   error
-	width     int
-	height    int
-	focusIdx  int  // 0=method, 1=url, 2=headers, 3=body, 4=response
-	editing   bool // vim-style insert mode for the selected request field
+	flow         *model.Flow
+	methodIn     textinput.Model
+	urlIn        textinput.Model
+	headersIn    textarea.Model
+	bodyIn       textarea.Model
+	respView     viewport.Model
+	keymap       repeaterKeyMap
+	resp         *model.Message
+	respErr      error
+	width        int
+	height       int
+	focusIdx     int  // 0=method, 1=url, 2=headers, 3=body, 4=response
+	editing      bool // vim-style insert mode for the selected request field
+	scopeBlocked bool // true when out-of-scope and awaiting confirmation
 }
 
 type repeaterKeyMap struct {
@@ -102,6 +103,17 @@ func (m RepeaterModel) Update(mgs tea.Msg) (RepeaterModel, tea.Cmd) {
 		m.respView.SetHeight(max(3, v.Height/4))
 		return m, nil
 	case tea.KeyPressMsg:
+		if m.scopeBlocked {
+			switch {
+			case key.Matches(v, key.NewBinding(key.WithKeys("y", "Y"))):
+				m.scopeBlocked = false
+				return m, m.sendCmd()
+			case key.Matches(v, key.NewBinding(key.WithKeys("n", "N", "esc"))):
+				m.scopeBlocked = false
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.editing {
 			switch {
 			case key.Matches(v, m.keymap.done):
@@ -244,7 +256,9 @@ func (m RepeaterModel) View() tea.View {
 		respLabel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("Response")
 	}
 	respContent := m.respView.View()
-	if m.resp == nil && m.respErr == nil {
+	if m.scopeBlocked {
+		respContent = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render("OUT OF SCOPE — press Y to send anyway, N to cancel")
+	} else if m.resp == nil && m.respErr == nil {
 		respContent = "(no response yet — press enter, s, F5, or ctrl+j from normal mode to send)"
 	}
 
@@ -276,6 +290,9 @@ type repeaterSendMsg struct {
 	flow  *model.Flow
 	edits repeater.Edits
 }
+
+// repeaterScopeBlockMsg is sent when the repeater target is out of scope.
+type repeaterScopeBlockMsg struct{}
 
 // repeaterResultMsg carries the replay response back to the TUI.
 type repeaterResultMsg struct {
