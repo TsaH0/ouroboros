@@ -282,8 +282,57 @@ func (m *AppModel) handleGlobalKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, m.openScopePane()
 	case key.Matches(v, key.NewBinding(key.WithKeys("5"))):
 		return true, m.openReconPane()
+	case key.Matches(v, key.NewBinding(key.WithKeys("i"))):
+		return m.importSelectedFlowAsScope()
 	}
 	return false, nil
+}
+
+// importSelectedFlowAsScope finds a history pane, gets its selected flow,
+// adds a scope rule for that flow's host, and focuses the scope pane.
+func (m *AppModel) importSelectedFlowAsScope() (bool, tea.Cmd) {
+	if m.ws == nil || m.scopeMgr == nil {
+		return false, nil
+	}
+	// Find a history pane in the workspace.
+	var history *HistoryModel
+	for _, p := range m.ws.Layout().Panes() {
+		if h, ok := p.View.(*HistoryModel); ok {
+			history = h
+			break
+		}
+	}
+	if history == nil {
+		return false, nil
+	}
+	flow := history.SelectedFlow()
+	if flow == nil || flow.Host == "" {
+		return false, nil
+	}
+	_, err := m.scopeMgr.AddRule(context.Background(), scope.Rule{
+		Kind:      scope.RuleKindHost,
+		Pattern:   flow.Host,
+		MatchMode: scope.MatchModeLiteral,
+		Action:    scope.ActionInclude,
+		Enabled:   true,
+		Priority:  10,
+	})
+	if err != nil {
+		return false, nil
+	}
+	// Focus existing scope pane, or open new one if none exists.
+	return true, m.focusOrOpenScopePane()
+}
+
+// focusOrOpenScopePane focuses an existing scope pane or opens a new one.
+func (m *AppModel) focusOrOpenScopePane() tea.Cmd {
+	for _, p := range m.ws.Layout().Panes() {
+		if _, ok := p.View.(*scopeView); ok {
+			m.ws.FocusPane(p.ID)
+			return nil
+		}
+	}
+	return m.openScopePane()
 }
 
 func (m *AppModel) openHistoryPane() tea.Cmd {

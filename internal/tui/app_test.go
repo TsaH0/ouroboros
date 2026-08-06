@@ -273,3 +273,83 @@ func TestBackToListQuitsOnLastPane(t *testing.T) {
 		t.Fatal("closing last pane should set quitting=true")
 	}
 }
+
+func TestGlobalImportSelectedFlowAsScope(t *testing.T) {
+	st := store.NewMemoryStore()
+	flow := &model.Flow{
+		ID:          "import-test",
+		StartTime:   time.Now(),
+		Host:        "import.example.com",
+		State:       model.FlowCompleted,
+		ScopeStatus: model.ScopeInScope,
+		Request:     &model.Message{Method: "GET", URL: "https://import.example.com/"},
+	}
+	if err := st.SaveFlow(context.Background(), flow); err != nil {
+		t.Fatalf("save flow: %v", err)
+	}
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// History is focused, flow is selected. Press 'i' to import as scope.
+	app.Update(appKey("i"))
+
+	// Should have opened scope pane with the new rule.
+	panes := app.ws.Layout().Panes()
+	if len(panes) != 2 {
+		t.Fatalf("pane count = %d, want 2 (history + scope)", len(panes))
+	}
+	if _, ok := app.ws.FocusedPane().View.(*scopeView); !ok {
+		t.Fatalf("focused view = %T, want *scopeView", app.ws.FocusedPane().View)
+	}
+
+	// Verify the rule was added.
+	rules := sc.Rules()
+	if len(rules) != 1 {
+		t.Fatalf("rule count = %d, want 1", len(rules))
+	}
+	if rules[0].Pattern != "import.example.com" {
+		t.Fatalf("rule pattern = %q, want import.example.com", rules[0].Pattern)
+	}
+	if rules[0].Kind != scope.RuleKindHost {
+		t.Fatalf("rule kind = %q, want host", rules[0].Kind)
+	}
+}
+
+func TestGlobalImportFromHistoryWithScopeOpen(t *testing.T) {
+	st := store.NewMemoryStore()
+	flow := &model.Flow{
+		ID:          "import-test-2",
+		StartTime:   time.Now(),
+		Host:        "import2.example.com",
+		State:       model.FlowCompleted,
+		ScopeStatus: model.ScopeInScope,
+		Request:     &model.Message{Method: "GET", URL: "https://import2.example.com/"},
+	}
+	if err := st.SaveFlow(context.Background(), flow); err != nil {
+		t.Fatalf("save flow: %v", err)
+	}
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// Open scope pane first (2 panes: history + scope).
+	app.Update(appKey("4"))
+	if len(app.ws.Layout().Panes()) != 2 {
+		t.Fatalf("pane count after scope = %d, want 2", len(app.ws.Layout().Panes()))
+	}
+
+	// Focus should be on scope. Press 'i' - should find history pane and import from it.
+	app.Update(appKey("i"))
+
+	// Should still have 2 panes, but scope rules updated.
+	panes := app.ws.Layout().Panes()
+	if len(panes) != 2 {
+		t.Fatalf("pane count = %d, want 2", len(panes))
+	}
+	rules := sc.Rules()
+	if len(rules) != 1 {
+		t.Fatalf("rule count = %d, want 1", len(rules))
+	}
+	if rules[0].Pattern != "import2.example.com" {
+		t.Fatalf("rule pattern = %q, want import2.example.com", rules[0].Pattern)
+	}
+}

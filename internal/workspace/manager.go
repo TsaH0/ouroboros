@@ -462,3 +462,8 @@ func (m *Manager) focusPane(id string) {
 	m.focusedID = id
 	m.status.FocusedPane = id
 }
+
+// FocusPane sets focus to the pane with the given ID (public).
+func (m *Manager) FocusPane(id string) {
+	m.focusPane(id)
+}
