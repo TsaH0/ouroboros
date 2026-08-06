@@ -114,7 +114,7 @@ func TestHistoryLoadsPersistedFlows(t *testing.T) {
 		t.Fatalf("save flow: %v", err)
 	}
 
-	history := NewHistoryModel(st, 80, 24)
+	history := NewHistoryModel(st, nil, 80, 24)
 	if len(history.rows) != 1 {
 		t.Fatalf("loaded history rows = %d, want 1", len(history.rows))
 	}

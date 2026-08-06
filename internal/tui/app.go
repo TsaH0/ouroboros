@@ -360,7 +360,7 @@ func (m *AppModel) focusOrOpenScopePane() tea.Cmd {
 }
 
 func (m *AppModel) openHistoryPane() tea.Cmd {
-	history := NewHistoryModel(m.store, m.width, m.height)
+	history := NewHistoryModel(m.store, m.scopeMgr, m.width, m.height)
 	history.id = m.nextViewID("history")
 	pane := m.ws.SplitHSplit(history)
 	return pane.View.Init()
@@ -601,7 +601,7 @@ func (m *AppModel) handleWorkspaceCommand(v workspace.CommandMsg) tea.Cmd {
 	// A split command creates a second history pane. This gives the generic
 	// workspace manager a concrete view without duplicating mutable model
 	// state, while number-key shortcuts open the functional workspaces.
-	history := NewHistoryModel(m.store, m.width, m.height)
+	history := NewHistoryModel(m.store, m.scopeMgr, m.width, m.height)
 	history.id = m.nextViewID("history")
 	var pane *workspace.Pane
 	switch v.Action {
@@ -714,7 +714,7 @@ func NewAppModel(s store.Store, p *proxy.Proxy, sc *scope.Manager) *AppModel {
 	ws := workspace.NewManager()
 
 	// Create the initial history pane.
-	history := NewHistoryModel(s, 80, 24)
+	history := NewHistoryModel(s, sc, 80, 24)
 	ws.AddPane(history)
 
 	ps, _ := project.NewStore("")
