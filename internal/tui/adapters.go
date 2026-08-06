@@ -20,8 +20,14 @@ func (v *reconView) ID() string {
 }
 func (v *reconView) Title() string { return "Recon" }
 func (v *reconView) View() string  { return v.ReconModel.View().Content }
-func (v *reconView) Focus()        {}
-func (v *reconView) Blur()         {}
+func (v *reconView) HelpText() string {
+	return "enter: run  tab/S-tab: tabs  a: AI analyze  q: back"
+}
+func (v *reconView) IsEditing() bool {
+	return v.ReconModel.summary == nil && !v.ReconModel.loading && !v.ReconModel.scopeBlocked
+}
+func (v *reconView) Focus() {}
+func (v *reconView) Blur()  {}
 func (v *reconView) Resize(w, h int) {
 	v.ReconModel.width = w
 	v.ReconModel.height = h
@@ -48,8 +54,12 @@ func (v *repeaterView) ID() string {
 }
 func (v *repeaterView) Title() string { return "Repeater" }
 func (v *repeaterView) View() string  { return v.RepeaterModel.View().Content }
-func (v *repeaterView) Focus()        {}
-func (v *repeaterView) Blur()         {}
+func (v *repeaterView) HelpText() string {
+	return "s/enter: send  i: edit  j/k: navigate  q: back"
+}
+func (v *repeaterView) IsEditing() bool { return v.RepeaterModel.editing }
+func (v *repeaterView) Focus()          {}
+func (v *repeaterView) Blur()           {}
 func (v *repeaterView) Resize(w, h int) {
 	v.RepeaterModel.width = w
 	v.RepeaterModel.height = h
@@ -76,8 +86,15 @@ func (v *llmView) ID() string {
 }
 func (v *llmView) Title() string { return "AI Analysis" }
 func (v *llmView) View() string  { return v.LLMModel.View().Content }
-func (v *llmView) Focus()        {}
-func (v *llmView) Blur()         {}
+func (v *llmView) HelpText() string {
+	if v.LLMModel.bulkKind == LLMViewBulk {
+		return "a: analyze all  q: back"
+	}
+	return "a: analyze  q: back"
+}
+func (v *llmView) IsEditing() bool { return false }
+func (v *llmView) Focus()          {}
+func (v *llmView) Blur()           {}
 func (v *llmView) Resize(w, h int) {
 	v.LLMModel.width = w
 	v.LLMModel.height = h
@@ -101,8 +118,12 @@ func (v *scopeView) ID() string {
 }
 func (v *scopeView) Title() string { return "Scope" }
 func (v *scopeView) View() string  { return v.ScopeModel.View().Content }
-func (v *scopeView) Focus()        {}
-func (v *scopeView) Blur()         {}
+func (v *scopeView) HelpText() string {
+	return "a: add  d: delete  space: toggle  /: search  i: import  I: import all  q: back"
+}
+func (v *scopeView) IsEditing() bool { return v.ScopeModel.adding || v.ScopeModel.searching }
+func (v *scopeView) Focus()          {}
+func (v *scopeView) Blur()           {}
 func (v *scopeView) Resize(w, h int) {
 	v.ScopeModel.width = w
 	v.ScopeModel.height = h
@@ -127,7 +148,11 @@ func (v *detailView) ID() string {
 func (v *detailView) Title() string { return "Detail" }
 func (v *detailView) View() string  { return v.DetailModel.View().Content }
 func (v *detailView) Focus()        {}
-func (v *detailView) Blur()         {}
+func (v *detailView) HelpText() string {
+	return "f: forward  d: drop  a: analyze  q: back"
+}
+func (v *detailView) IsEditing() bool { return false }
+func (v *detailView) Blur()           {}
 func (v *detailView) Resize(w, h int) {
 	v.DetailModel.width = w
 	v.DetailModel.height = h

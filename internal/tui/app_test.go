@@ -121,3 +121,86 @@ func TestHistoryLoadsPersistedFlows(t *testing.T) {
 		t.Fatalf("loaded flow ID = %q, want ted-flow", got)
 	}
 }
+
+func TestGlobalKeyOpensHistoryFromScope(t *testing.T) {
+	st := store.NewMemoryStore()
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// Open scope from history pane.
+	app.Update(appKey("4"))
+	panes := app.ws.Layout().Panes()
+	if len(panes) != 2 {
+		t.Fatalf("pane count after scope = %d, want 2", len(panes))
+	}
+	if _, ok := app.ws.FocusedPane().View.(*scopeView); !ok {
+		t.Fatalf("focused view = %T, want *scopeView", app.ws.FocusedPane().View)
+	}
+
+	// Press 0 from inside scope to spawn a new history pane.
+	// Scope with no input active is NOT editing, so 0 works globally.
+	app.Update(appKey("0"))
+	panes = app.ws.Layout().Panes()
+	if len(panes) != 3 {
+		t.Fatalf("pane count after history spawn = %d, want 3", len(panes))
+	}
+	if _, ok := app.ws.FocusedPane().View.(*HistoryModel); !ok {
+		t.Fatalf("focused view = %T, want *HistoryModel", app.ws.FocusedPane().View)
+	}
+}
+
+func TestReconEditingSuppressesGlobalKeys(t *testing.T) {
+	st := store.NewMemoryStore()
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// Open recon — target input is focused and editing.
+	app.Update(appKey("5"))
+	if _, ok := app.ws.FocusedPane().View.(*reconView); !ok {
+		t.Fatalf("focused view = %T, want *reconView", app.ws.FocusedPane().View)
+	}
+
+	// "0" should go to the recon text input, not spawn history.
+	app.Update(appKey("0"))
+	panes := app.ws.Layout().Panes()
+	if len(panes) != 2 {
+		t.Fatalf("pane count = %d, want 2 (0 should have been eaten by text input)", len(panes))
+	}
+}
+
+func TestGlobalKeyOpensScopeFromDetail(t *testing.T) {
+	st := store.NewMemoryStore()
+	flow := &model.Flow{
+		ID:          "test-flow",
+		StartTime:   time.Now(),
+		Host:        "example.com",
+		State:       model.FlowCompleted,
+		ScopeStatus: model.ScopeInScope,
+		Request:     &model.Message{Method: "GET", URL: "https://example.com/"},
+	}
+	if err := st.SaveFlow(context.Background(), flow); err != nil {
+		t.Fatalf("save flow: %v", err)
+	}
+	sc := scope.NewManager(st)
+	app := NewAppModel(st, nil, sc)
+
+	// Open detail from history.
+	app.Update(appKey("enter"))
+	panes := app.ws.Layout().Panes()
+	if len(panes) != 2 {
+		t.Fatalf("pane count after detail = %d, want 2", len(panes))
+	}
+	if _, ok := app.ws.FocusedPane().View.(*detailView); !ok {
+		t.Fatalf("focused view = %T, want *detailView", app.ws.FocusedPane().View)
+	}
+
+	// Detail is NOT editing, so 4 opens scope.
+	app.Update(appKey("4"))
+	panes = app.ws.Layout().Panes()
+	if len(panes) != 3 {
+		t.Fatalf("pane count after scope spawn = %d, want 3", len(panes))
+	}
+	if _, ok := app.ws.FocusedPane().View.(*scopeView); !ok {
+		t.Fatalf("focused view = %T, want *scopeView", app.ws.FocusedPane().View)
+	}
+}

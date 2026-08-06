@@ -27,4 +27,11 @@ type View interface {
 
 	// Resize updates the view's dimensions.
 	Resize(width, height int)
+
+	// HelpText returns the keybindings shown in the workspace help bar.
+	HelpText() string
+
+	// IsEditing returns true when the view has a text input capturing keystrokes.
+	// Global key shortcuts are suppressed while editing.
+	IsEditing() bool
 }

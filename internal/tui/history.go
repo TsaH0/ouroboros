@@ -63,6 +63,10 @@ func (m *HistoryModel) ID() string {
 }
 func (m *HistoryModel) Title() string { return "History" }
 func (m *HistoryModel) Init() tea.Cmd { return nil }
+func (m *HistoryModel) HelpText() string {
+	return "⏎: detail  r: repeater  a: AI  q: quit"
+}
+func (m *HistoryModel) IsEditing() bool { return false }
 
 func (m *HistoryModel) Update(mgs tea.Msg) (workspace.View, tea.Cmd) {
 	switch v := mgs.(type) {

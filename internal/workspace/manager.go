@@ -390,12 +390,12 @@ func (m *Manager) Resize(width, height int) {
 	m.width = width
 	m.height = height
 	if m.layout != nil {
-		// Reserve 1 line for status bar.
-		m.layout.Resize(width, height-1)
+		// Reserve 2 lines: help bar + status bar.
+		m.layout.Resize(width, height-2)
 	}
 }
 
-// View renders the full workspace including status bar.
+// View renders the full workspace including help bar and status bar.
 func (m *Manager) View() string {
 	if m.layout == nil {
 		return ""
@@ -403,8 +403,25 @@ func (m *Manager) View() string {
 
 	content := m.layout.Render()
 
-	// Status bar.
 	focused := m.FocusedPane()
+
+	// Help bar — shows the focused pane's keybindings plus workspace-global keys.
+	helpText := ""
+	if focused != nil {
+		helpText = focused.View.HelpText()
+	}
+	workspaceKeys := "^h/j/k/l: focus  ^w: split/close  0: history  4: scope  5: recon"
+	if helpText != "" {
+		helpText += "  "
+	}
+	helpText += workspaceKeys
+	helpBar := lipgloss.NewStyle().
+		Width(m.width).
+		Background(lipgloss.Color("236")).
+		Foreground(lipgloss.Color("250")).
+		Render(helpText)
+
+	// Status bar.
 	focusedTitle := ""
 	if focused != nil {
 		focusedTitle = focused.View.Title()
@@ -421,7 +438,7 @@ func (m *Manager) View() string {
 		Foreground(lipgloss.Color("250")).
 		Render(statusText)
 
-	return content + "\n" + statusBar
+	return content + "\n" + helpBar + "\n" + statusBar
 }
 
 // focusPane sets focus to the pane with the given ID.

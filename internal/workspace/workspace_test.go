@@ -13,14 +13,16 @@ type testView struct {
 	data  string
 }
 
-func (v *testView) ID() string            { return v.id }
-func (v *testView) Title() string         { return v.title }
-func (v *testView) Init() tea.Cmd         { return nil }
+func (v *testView) ID() string                     { return v.id }
+func (v *testView) Title() string                  { return v.title }
+func (v *testView) Init() tea.Cmd                  { return nil }
 func (v *testView) Update(tea.Msg) (View, tea.Cmd) { return v, nil }
-func (v *testView) View() string          { return v.data }
-func (v *testView) Focus()                {}
-func (v *testView) Blur()                 {}
-func (v *testView) Resize(w, h int)       {}
+func (v *testView) View() string                   { return v.data }
+func (v *testView) Focus()                         {}
+func (v *testView) Blur()                          {}
+func (v *testView) Resize(w, h int)                {}
+func (v *testView) HelpText() string               { return "" }
+func (v *testView) IsEditing() bool                { return false }
 
 func newTestView(id, title string) *testView {
 	return &testView{id: id, title: title, data: id + " content"}

@@ -88,6 +88,11 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		}
+		// Global view-opening shortcuts (0/4/5) work from any pane
+		// unless the focused pane has a text input capturing keystrokes.
+		if handled, cmd := m.handleGlobalKey(v); handled {
+			return m, cmd
+		}
 		if handled, cmd := m.handleHistoryKey(v); handled {
 			return m, cmd
 		}
@@ -248,6 +253,38 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleGlobalKey processes view-opening shortcuts (0/4/5) that work from
+// any pane unless the focused pane is actively capturing text input.
+func (m *AppModel) handleGlobalKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
+	if m.ws == nil {
+		return false, nil
+	}
+	focused := m.ws.FocusedPane()
+	if focused == nil {
+		return false, nil
+	}
+	// Suppress global shortcuts while a pane has a text input active.
+	if focused.View.IsEditing() {
+		return false, nil
+	}
+	switch {
+	case key.Matches(v, key.NewBinding(key.WithKeys("0"))):
+		return true, m.openHistoryPane()
+	case key.Matches(v, key.NewBinding(key.WithKeys("4"))):
+		return true, m.openScopePane()
+	case key.Matches(v, key.NewBinding(key.WithKeys("5"))):
+		return true, m.openReconPane()
+	}
+	return false, nil
+}
+
+func (m *AppModel) openHistoryPane() tea.Cmd {
+	history := NewHistoryModel(m.store, m.width, m.height)
+	history.id = m.nextViewID("history")
+	pane := m.ws.SplitHSplit(history)
+	return pane.View.Init()
+}
+
 // handleHistoryKey handles application-level shortcuts that are only valid
 // while the history pane is focused.
 func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
@@ -266,10 +303,6 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 	case key.Matches(v, key.NewBinding(key.WithKeys("q"))):
 		m.quitting = true
 		return true, tea.Quit
-	case key.Matches(v, key.NewBinding(key.WithKeys("4"))):
-		return true, m.openScopePane()
-	case key.Matches(v, key.NewBinding(key.WithKeys("5"))):
-		return true, m.openReconPane()
 	case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
 		return m.openSelectedFlow(func(flow *model.Flow) tea.Cmd {
 			detail := NewDetailModel(flow, m.width, m.height)
@@ -418,7 +451,7 @@ func (m AppModel) View() tea.View {
 		return tea.View{Content: m.history.View(), AltScreen: true}
 	}
 
-	return tea.View{Content: "Ouroboros — press 4 for Scope, 5 for Recon", AltScreen: true}
+	return tea.View{Content: "Ouroboros — press 0: History, 4: Scope, 5: Recon", AltScreen: true}
 }
 
 // NewAppModel creates a new AppModel.
