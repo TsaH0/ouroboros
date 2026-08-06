@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"sentinel/internal/model"
+	"sentinel/internal/recon"
 )
 
 type mockProvider struct {
@@ -151,5 +152,72 @@ func TestGetBulkSchema(t *testing.T) {
 	}
 	if _, ok := props["summary"]; !ok {
 		t.Fatal("missing summary in bulk schema")
+	}
+}
+
+func TestGetReconSchema(t *testing.T) {
+	schema := getReconSchema()
+	var s map[string]any
+	if err := json.Unmarshal(schema, &s); err != nil {
+		t.Fatalf("recon schema is invalid JSON: %v", err)
+	}
+	props, ok := s["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("missing properties in recon schema")
+	}
+	required := []string{"summary", "high_priority", "interesting_hosts", "interesting_endpoints", "recommended_testing_order", "interesting_patterns", "reasoning"}
+	for _, key := range required {
+		if _, ok := props[key]; !ok {
+			t.Fatalf("recon schema missing property: %s", key)
+		}
+	}
+}
+
+func TestAnalyzer_AnalyzeRecon(t *testing.T) {
+	resp := `{"summary":"focus on admin panel","high_priority":["admin panel at /admin"],"interesting_hosts":["admin.example.com"],"interesting_endpoints":["/admin"],"recommended_testing_order":["1. Test /admin for auth bypass","2. Test /api for IDOR"],"interesting_patterns":["admin endpoints exposed without rate limiting"],"reasoning":["Admin panel accessible from external network"]}`
+	provider := &mockProvider{response: resp}
+	analyzer := NewAnalyzer(provider, "test-model")
+
+	summary := &recon.ReconSummary{
+		Target:       "example.com",
+		Hosts:        []recon.Host{{Hostname: "admin.example.com", Sources: []recon.Source{recon.SourceSubfinder}}},
+		Endpoints:    []recon.Endpoint{{URL: "http://example.com/admin", Host: "example.com", Path: "/admin", Category: recon.CatAdmin, Score: 100, Sources: []recon.Source{recon.SourceGAU}}},
+		Technologies: []recon.Technology{{Name: "Apache", Version: "2.4.41", Host: "example.com", Source: recon.SourceWhatWeb}},
+	}
+
+	result, err := analyzer.AnalyzeRecon(context.Background(), summary)
+	if err != nil {
+		t.Fatalf("analyze recon: %v", err)
+	}
+	if result.Summary != "focus on admin panel" {
+		t.Fatalf("summary = %s", result.Summary)
+	}
+	if len(result.HighPriority) != 1 {
+		t.Fatalf("high_priority count = %d", len(result.HighPriority))
+	}
+	if len(result.RecommendedOrder) != 2 {
+		t.Fatalf("recommended order count = %d", len(result.RecommendedOrder))
+	}
+}
+
+func TestAnalyzer_AnalyzeRecon_ProviderError(t *testing.T) {
+	provider := &mockProvider{err: fmt.Errorf("network error")}
+	analyzer := NewAnalyzer(provider, "test-model")
+
+	summary := &recon.ReconSummary{Target: "example.com"}
+	_, err := analyzer.AnalyzeRecon(context.Background(), summary)
+	if err == nil {
+		t.Fatal("expected error for provider failure")
+	}
+}
+
+func TestAnalyzer_AnalyzeRecon_InvalidJSON(t *testing.T) {
+	provider := &mockProvider{response: `not json`}
+	analyzer := NewAnalyzer(provider, "test-model")
+
+	summary := &recon.ReconSummary{Target: "example.com"}
+	_, err := analyzer.AnalyzeRecon(context.Background(), summary)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
 	}
 }

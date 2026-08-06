@@ -15,6 +15,7 @@ import (
 	"sentinel/internal/llm"
 	"sentinel/internal/msg"
 	"sentinel/internal/proxy"
+	"sentinel/internal/recon"
 	"sentinel/internal/repeater"
 	"sentinel/internal/store"
 )
@@ -27,26 +28,27 @@ const (
 	ModeDetail
 	ModeRepeater
 	ModeLLM
+	ModeRecon
 )
 
 // AppModel is the top-level Bubble Tea model for the Sentinel TUI.
 type AppModel struct {
-	store       *store.InMemoryFlowStore
-	proxy       *proxy.Proxy
-	repeaterSvc repeater.Service
-	llmAnalyzer *llm.Analyzer
-	mode        Mode
-	table       table.Model
-	help        help.Model
-	keymap      appKeyMap
-	quitting    bool
-	rows        []table.Row
-	detail      *DetailModel
-	repeater    *RepeaterModel
-	llm         *LLMModel
-	// llmContext holds prior analysis conversation for context-aware analysis.
-	llmContext []llm.Message
-	// lastBulkResult caches the most recent bulk analysis for reference.
+	store          *store.InMemoryFlowStore
+	proxy          *proxy.Proxy
+	repeaterSvc    repeater.Service
+	llmAnalyzer    *llm.Analyzer
+	reconMgr       *recon.Engine
+	mode           Mode
+	table          table.Model
+	help           help.Model
+	keymap         appKeyMap
+	quitting       bool
+	rows           []table.Row
+	detail         *DetailModel
+	repeater       *RepeaterModel
+	llm            *LLMModel
+	recon          *ReconModel
+	llmContext     []llm.Message
 	lastBulkResult *llm.BulkAnalysisResult
 	width          int
 	height         int
@@ -58,6 +60,7 @@ type appKeyMap struct {
 	enter    key.Binding
 	repeater key.Binding
 	llm      key.Binding
+	recon    key.Binding
 }
 
 // backToListMsg signals a sub-view to return to the history list.
@@ -68,22 +71,40 @@ func (m *AppModel) SetAnalyzer(a *llm.Analyzer) {
 	m.llmAnalyzer = a
 }
 
+// SetReconEngine sets the recon engine (called from main).
+func (m *AppModel) SetReconEngine(engine *recon.Engine) {
+	m.reconMgr = engine
+}
+
 func (m *AppModel) Init() tea.Cmd {
 	return nil
 }
 
 func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
-	// Handle back-to-list transitions from any sub-model.
+	// Handle back-to-list transitions and result messages from any sub-model.
 	switch v := mgs.(type) {
 	case backToListMsg:
 		m.mode = ModeHistory
 		m.detail = nil
 		m.repeater = nil
 		m.llm = nil
+		m.recon = nil
 		return m, nil
 	case repeaterResultMsg:
 		if m.repeater != nil {
 			setRepeaterResponse(m.repeater, v.resp, v.err)
+		}
+		return m, nil
+	case reconResultMsg:
+		if m.recon != nil {
+			updated, _ := m.recon.Update(v)
+			m.recon = &updated
+		}
+		return m, nil
+	case reconAIResultMsg:
+		if m.recon != nil {
+			updated, _ := m.recon.Update(v)
+			m.recon = &updated
 		}
 		return m, nil
 	}
@@ -187,6 +208,33 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case ModeRecon:
+		if m.recon != nil {
+			updated, reconCmd := m.recon.Update(mgs)
+			m.recon = &updated
+			if reconCmd != nil {
+				cmdMsg := reconCmd()
+				switch v := cmdMsg.(type) {
+				case backToListMsg:
+					m.mode = ModeHistory
+					m.recon = nil
+				case reconRunMsg:
+					return m, func() tea.Msg {
+						summary, err := m.reconMgr.Run(context.Background(), v.target)
+						return reconResultMsg{summary: summary, err: err}
+					}
+				case reconAIAnalyzeMsg:
+					return m, func() tea.Msg {
+						if m.llmAnalyzer == nil {
+							return reconAIResultMsg{err: fmt.Errorf("no LLM configured")}
+						}
+						result, err := m.llmAnalyzer.AnalyzeRecon(context.Background(), v.summary)
+						return reconAIResultMsg{result: result, err: err}
+					}
+				}
+			}
+			return m, nil
+		}
 	}
 
 	switch v := mgs.(type) {
@@ -237,6 +285,12 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			l := NewBulkLLMModel(m.width, m.height)
 			m.mode = ModeLLM
 			m.llm = &l
+		case key.Matches(v, m.keymap.recon):
+			if m.reconMgr != nil {
+				r := NewReconModel(m.reconMgr, m.llmAnalyzer, m.width, m.height)
+				m.mode = ModeRecon
+				m.recon = &r
+			}
 		}
 
 	case msg.FlowCompleted:
@@ -274,12 +328,6 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		detail := NewDetailModel(flow, m.width, m.height)
 		m.mode = ModeDetail
 		m.detail = &detail
-		return m, nil
-
-	case repeaterResultMsg:
-		if m.repeater != nil {
-			setRepeaterResponse(m.repeater, v.resp, v.err)
-		}
 		return m, nil
 
 	case llmResultMsg:
@@ -334,6 +382,10 @@ func (m AppModel) View() tea.View {
 		if m.llm != nil {
 			return m.llm.View()
 		}
+	case ModeRecon:
+		if m.recon != nil {
+			return m.recon.View()
+		}
 	}
 
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
@@ -341,7 +393,7 @@ func (m AppModel) View() tea.View {
 		Render(" Sentinel — HTTP History")
 	body := m.table.View()
 	footer := m.help.ShortHelpView([]key.Binding{
-		m.keymap.quit, m.keymap.enter, m.keymap.repeater, m.keymap.llm,
+		m.keymap.quit, m.keymap.enter, m.keymap.repeater, m.keymap.llm, m.keymap.recon,
 	})
 
 	s := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
@@ -377,6 +429,7 @@ func NewAppModel(s *store.InMemoryFlowStore, p *proxy.Proxy) *AppModel {
 			enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view detail")),
 			repeater: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "repeater")),
 			llm:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "analyze")),
+			recon:    key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "recon")),
 		},
 	}
 }

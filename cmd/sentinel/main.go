@@ -17,6 +17,11 @@ import (
 	"sentinel/internal/intercept"
 	"sentinel/internal/llm"
 	"sentinel/internal/proxy"
+	"sentinel/internal/recon"
+	"sentinel/internal/recon/providers/gau"
+	"sentinel/internal/recon/providers/subfinder"
+	"sentinel/internal/recon/providers/wayback"
+	"sentinel/internal/recon/providers/whatweb"
 	"sentinel/internal/scope"
 	"sentinel/internal/store"
 	"sentinel/internal/tui"
@@ -68,6 +73,18 @@ func main() {
 
 	// Wire the program into the proxy so it can send events.
 	pxy.SetProgram(p)
+
+	// Initialize recon engine.
+	reconCache := recon.NewCache()
+	reconRunner := recon.DefaultCommandRunner{}
+	reconProviders := []recon.ProviderMetadata{
+		{Provider: &subfinder.Provider{Runner: reconRunner}, Role: recon.RoleDiscovery, Timeout: 60},
+		{Provider: &gau.Provider{Runner: reconRunner}, Role: recon.RoleDiscovery, Timeout: 60},
+		{Provider: &wayback.Provider{Runner: reconRunner}, Role: recon.RoleDiscovery, Timeout: 60},
+		{Provider: &whatweb.Provider{Runner: reconRunner}, Role: recon.RoleEnrichment, Timeout: 30},
+	}
+	reconEngine := recon.NewEngine(reconCache, reconRunner, reconProviders)
+	app.SetReconEngine(reconEngine)
 
 	// Configure LLM provider.
 	providerName := *providerType
