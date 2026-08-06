@@ -25,10 +25,10 @@ import (
 func main() {
 	installCA := flag.Bool("install-ca", false, "Print the CA certificate for browser installation")
 	proxyAddr := flag.String("proxy-addr", ":8080", "Proxy listen address")
-	providerType := flag.String("provider", "", "LLM provider: openai, ollama, or nvidia (auto-detects when empty)")
+	providerType := flag.String("provider", "", "LLM provider: openai, ollama, nvidia, or gemini (auto-detects when empty)")
 	apiBase := flag.String("api-base", "", "LLM API base URL (e.g. https://integrate.api.nvidia.com/v1)")
-	apiKey := flag.String("api-key", "", "LLM API key (defaults to $NVIDIA_API_KEY or $OPENAI_API_KEY)")
-	model := flag.String("model", "", "LLM model name (e.g. poolside/laguna-xs-2.1)")
+	apiKey := flag.String("api-key", "", "LLM API key (defaults to $NVIDIA_API_KEY, $GEMINI_API_KEY, or $OPENAI_API_KEY)")
+	model := flag.String("model", "", "LLM model name (e.g. poolside/laguna-xs-2.1, gemini-2.5-flash)")
 	flag.Parse()
 
 	if *installCA {
@@ -75,6 +75,8 @@ func main() {
 		switch {
 		case os.Getenv("NVIDIA_API_KEY") != "":
 			providerName = "nvidia"
+		case os.Getenv("GEMINI_API_KEY") != "":
+			providerName = "gemini"
 		case os.Getenv("OPENAI_API_KEY") != "":
 			providerName = "openai"
 		default:
@@ -98,10 +100,18 @@ func main() {
 		if *model == "" {
 			*model = "poolside/laguna-xs-2.1"
 		}
+	case "gemini":
+		pt = llm.ProviderGemini
+		if *apiKey == "" {
+			*apiKey = os.Getenv("GEMINI_API_KEY")
+		}
+		if *model == "" {
+			*model = "gemini-2.5-flash"
+		}
 	case "openai":
 		pt = llm.ProviderOpenAI
 	default:
-		log.Fatalf("unknown provider: %s (use openai, ollama, or nvidia)", providerName)
+		log.Fatalf("unknown provider: %s (use openai, ollama, nvidia, or gemini)", providerName)
 	}
 
 	provider, modelName := llm.NewProvider(pt, *apiBase, *apiKey, *model)

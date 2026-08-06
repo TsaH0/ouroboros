@@ -143,7 +143,7 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 				case llmAnalyzeMsg:
 					return m, func() tea.Msg {
 						if m.llmAnalyzer == nil {
-							return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, or run Ollama)")}
+							return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, GEMINI_API_KEY, or run Ollama)")}
 						}
 						result, err := m.llmAnalyzer.AnalyzeFlow(context.Background(), v.flow)
 						return llmResultMsg{result: result, err: err}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 )
 
@@ -206,6 +207,110 @@ func (p *ollamaProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 	}, nil
 }
 
+// --- Gemini Provider ---
+
+type geminiProvider struct {
+	baseURL    string
+	apiKey     string
+	httpClient *http.Client
+}
+
+// NewGeminiProvider creates a Google Gemini provider using the native
+// generateContent API. baseURL should normally be
+// "https://generativelanguage.googleapis.com/v1beta".
+func NewGeminiProvider(baseURL, apiKey string) Provider {
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	return &geminiProvider{
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		httpClient: &http.Client{},
+	}
+}
+
+func (p *geminiProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	type geminiPart struct {
+		Text string `json:"text"`
+	}
+	type geminiContent struct {
+		Role  string       `json:"role,omitempty"`
+		Parts []geminiPart `json:"parts"`
+	}
+
+	var systemParts []geminiPart
+	var contents []geminiContent
+	for _, m := range req.Messages {
+		switch m.Role {
+		case RoleSystem:
+			systemParts = append(systemParts, geminiPart{Text: m.Content})
+		case RoleAssistant:
+			contents = append(contents, geminiContent{Role: "model", Parts: []geminiPart{{Text: m.Content}}})
+		default:
+			contents = append(contents, geminiContent{Role: "user", Parts: []geminiPart{{Text: m.Content}}})
+		}
+	}
+
+	body := map[string]any{
+		"contents": contents,
+		"generationConfig": map[string]any{
+			"temperature": 0.2,
+		},
+	}
+	if len(systemParts) > 0 {
+		body["systemInstruction"] = map[string]any{"parts": systemParts}
+	}
+	if req.Schema != nil {
+		var schema map[string]any
+		if err := json.Unmarshal(req.Schema, &schema); err != nil {
+			return nil, fmt.Errorf("gemini schema unmarshal: %w", err)
+		}
+		body["generationConfig"].(map[string]any)["responseMimeType"] = "application/json"
+		body["generationConfig"].(map[string]any)["responseSchema"] = schema
+	}
+
+	b, _ := json.Marshal(body)
+	endpoint := fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.baseURL, url.PathEscape(req.Model), url.QueryEscape(p.apiKey))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("gemini request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gemini error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+			FinishReason string `json:"finishReason"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("gemini unmarshal: %w", err)
+	}
+	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("gemini empty response")
+	}
+
+	return &ChatResponse{
+		Content:      result.Candidates[0].Content.Parts[0].Text,
+		FinishReason: result.Candidates[0].FinishReason,
+	}, nil
+}
+
 // --- Provider Factory ---
 
 // ProviderType selects the LLM backend.
@@ -214,11 +319,13 @@ type ProviderType string
 const (
 	ProviderOpenAI ProviderType = "openai"
 	ProviderOllama ProviderType = "ollama"
+	ProviderGemini ProviderType = "gemini"
 )
 
 // NewProvider creates a provider from explicit parameters.
 // apiBase is the full API base URL (e.g. "https://api.openai.com/v1").
 // For Ollama, apiBase is the server URL (e.g. "http://localhost:11434").
+// For Gemini, apiBase is the API version root (e.g. "https://generativelanguage.googleapis.com/v1beta").
 func NewProvider(pt ProviderType, apiBase, apiKey, model string) (Provider, string) {
 	switch pt {
 	case ProviderOpenAI:
@@ -240,6 +347,17 @@ func NewProvider(pt ProviderType, apiBase, apiKey, model string) (Provider, stri
 			model = "llama3.2"
 		}
 		return NewOllamaProvider(apiBase), model
+	case ProviderGemini:
+		if apiBase == "" {
+			apiBase = "https://generativelanguage.googleapis.com/v1beta"
+		}
+		if apiKey == "" {
+			apiKey = os.Getenv("GEMINI_API_KEY")
+		}
+		if model == "" {
+			model = "gemini-2.5-flash"
+		}
+		return NewGeminiProvider(apiBase, apiKey), model
 	default:
 		return nil, ""
 	}

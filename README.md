@@ -93,6 +93,10 @@ LLM analysis:
 export NVIDIA_API_KEY="..."
 go run ./cmd/sentinel --provider=nvidia --model=poolside/laguna-xs-2.1
 
+# Gemini
+export GEMINI_API_KEY="..."
+go run ./cmd/sentinel --provider=gemini --model=gemini-2.5-flash
+
 # OpenAI
 export OPENAI_API_KEY="..."
 go run ./cmd/sentinel --provider=openai --model=gpt-4o-mini
