@@ -35,6 +35,9 @@ func CACertDir() (string, error) {
 }
 
 // LoadOrGenerateCA loads an existing CA from disk or generates a new one.
+//
+// The legacy Sentinel path is checked first so upgrading after the product
+// rename preserves the CA already trusted by browsers and test clients.
 func LoadOrGenerateCA() (*CACert, error) {
 	dir, err := CACertDir()
 	if err != nil {
@@ -44,22 +47,34 @@ func LoadOrGenerateCA() (*CACert, error) {
 	certPath := filepath.Join(dir, "ca.pem")
 	keyPath := filepath.Join(dir, "ca-key.pem")
 
-	// Try loading existing.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	legacyDir := filepath.Join(home, ".config", "sentinel")
+	legacyCertPath := filepath.Join(legacyDir, "ca.pem")
+	legacyKeyPath := filepath.Join(legacyDir, "ca-key.pem")
+
+	// Prefer the legacy CA when present. This preserves the trust anchor
+	// created before the rename, even if Ouroboros was started once already.
+	if ca, err := loadCAFromDisk(legacyCertPath, legacyKeyPath); err == nil {
+		if err := saveCAToDisk(ca, certPath, keyPath); err != nil {
+			return nil, fmt.Errorf("migrate legacy CA: %w", err)
+		}
+		return ca, nil
+	}
+
 	if ca, err := loadCAFromDisk(certPath, keyPath); err == nil {
 		return ca, nil
 	}
 
-	// Generate new CA.
 	ca, err := generateCA()
 	if err != nil {
 		return nil, fmt.Errorf("generate CA: %w", err)
 	}
-
-	// Save to disk.
 	if err := saveCAToDisk(ca, certPath, keyPath); err != nil {
 		return nil, fmt.Errorf("save CA: %w", err)
 	}
-
 	return ca, nil
 }
 
