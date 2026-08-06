@@ -88,7 +88,7 @@ func NewScopeModel(mgr *scope.Manager, st store.Store, width, height int) ScopeM
 			back:      key.NewBinding(key.WithKeys("q", "esc")),
 			add:       key.NewBinding(key.WithKeys("a")),
 			delete:    key.NewBinding(key.WithKeys("d", "x")),
-			toggle:    key.NewBinding(key.WithKeys(" ", "e")),
+			toggle:    key.NewBinding(key.WithKeys("space", " ", "e")),
 			search:    key.NewBinding(key.WithKeys("/")),
 			importOne: key.NewBinding(key.WithKeys("i")),
 			importAll: key.NewBinding(key.WithKeys("I")),

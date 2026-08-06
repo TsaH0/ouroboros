@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"ouroboros/internal/llm"
-	"ouroboros/internal/msg"
 	"ouroboros/internal/model"
+	"ouroboros/internal/msg"
 	"ouroboros/internal/proxy"
 	"ouroboros/internal/recon"
 	"ouroboros/internal/repeater"
@@ -40,6 +40,7 @@ type AppModel struct {
 	width                  int
 	height                 int
 	ready                  bool
+	viewSeq                uint64
 }
 
 // SetAnalyzer sets the LLM analyzer (called from main after provider config).
@@ -80,56 +81,76 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			m.ws.Update(v)
 		}
 		return m, nil
-
 	case tea.KeyPressMsg:
-		// Global quit.
-		if key.Matches(v, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
+		// Ctrl+c is the only unconditional quit key. The q key belongs to
+		// the focused view everywhere except the history root.
+		if key.Matches(v, key.NewBinding(key.WithKeys("ctrl+c"))) {
 			m.quitting = true
 			return m, tea.Quit
 		}
-		// Delegate to workspace manager.
+		if handled, cmd := m.handleHistoryKey(v); handled {
+			return m, cmd
+		}
+		// Delegate all other keys to the workspace manager. This preserves
+		// view-local bindings such as q/esc for returning from a pane.
 		if m.ws != nil {
 			cmd := m.ws.Update(v)
 			return m, cmd
 		}
 		return m, nil
+	case backToListMsg:
+		if m.ws != nil {
+			m.ws.CloseFocused()
+		}
+		return m, nil
+
+	case workspace.CommandMsg:
+		return m, m.handleWorkspaceCommand(v)
 
 	case msg.FlowCompleted:
 		// Dispatch to all panes (history, etc.).
 		if m.ws != nil {
-			m.ws.Update(v)
+			return m, m.ws.Update(v)
 		}
 		return m, nil
 
 	case msg.InterceptionRequired:
-		flow, err := m.store.GetFlow(nil, v.FlowID)
+		flow, err := m.store.GetFlow(context.Background(), v.FlowID)
 		if err != nil || flow == nil {
 			return m, nil
 		}
 		// Open detail view in a new pane.
 		detail := NewDetailModel(flow, m.width, m.height)
-		m.ws.SplitHSplit(&detailView{DetailModel: &detail})
-		return m, nil
+		pane := m.ws.SplitHSplit(&detailView{
+			DetailModel: &detail,
+			id:          m.nextViewID("detail"),
+		})
+		return m, pane.View.Init()
 
 	case recon.ProgressUpdate:
 		if m.ws != nil {
-			m.ws.Update(v)
+			return m, m.ws.Update(v)
 		}
 		return m, nil
 
 	case reconResultMsg:
 		if m.ws != nil {
-			m.ws.Update(v)
+			return m, m.ws.Update(v)
 		}
 		return m, nil
 
 	case reconAIResultMsg:
 		if m.ws != nil {
-			m.ws.Update(v)
+			return m, m.ws.Update(v)
 		}
 		return m, nil
 
 	case reconRunMsg:
+		if m.reconMgr == nil {
+			return m, func() tea.Msg {
+				return reconResultMsg{err: fmt.Errorf("recon engine is not configured")}
+			}
+		}
 		run := func() tea.Msg {
 			summary, err := m.reconMgr.Run(context.Background(), v.target)
 			return reconResultMsg{summary: summary, err: err}
@@ -155,19 +176,19 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repeaterResultMsg:
 		if m.ws != nil {
-			m.ws.Update(v)
+			return m, m.ws.Update(v)
 		}
 		return m, nil
 
 	case repeaterScopeBlockMsg:
 		if m.ws != nil {
-			m.ws.Update(v)
+			return m, m.ws.Update(v)
 		}
 		return m, nil
 
 	case llmResultMsg:
 		if m.ws != nil {
-			m.ws.Update(v)
+			return m, m.ws.Update(v)
 		}
 		return m, nil
 
@@ -225,6 +246,119 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// handleHistoryKey handles application-level shortcuts that are only valid
+// while the history pane is focused.
+func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
+	if m.ws == nil {
+		return false, nil
+	}
+	focused := m.ws.FocusedPane()
+	if focused == nil {
+		return false, nil
+	}
+	if _, ok := focused.View.(*HistoryModel); !ok {
+		return false, nil
+	}
+
+	switch {
+	case key.Matches(v, key.NewBinding(key.WithKeys("q"))):
+		m.quitting = true
+		return true, tea.Quit
+	case key.Matches(v, key.NewBinding(key.WithKeys("4"))):
+		return true, m.openScopePane()
+	case key.Matches(v, key.NewBinding(key.WithKeys("5"))):
+		return true, m.openReconPane()
+	case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
+		return m.openSelectedFlow(func(flow *model.Flow) tea.Cmd {
+			detail := NewDetailModel(flow, m.width, m.height)
+			pane := m.ws.SplitHSplit(&detailView{
+				DetailModel: &detail,
+				id:          m.nextViewID("detail"),
+			})
+			return pane.View.Init()
+		})
+	case key.Matches(v, key.NewBinding(key.WithKeys("r"))):
+		return m.openSelectedFlow(func(flow *model.Flow) tea.Cmd {
+			repeater := NewRepeaterModel(flow, m.width, m.height)
+			pane := m.ws.SplitHSplit(&repeaterView{
+				RepeaterModel: &repeater,
+				id:            m.nextViewID("repeater"),
+			})
+			return pane.View.Init()
+		})
+	case key.Matches(v, key.NewBinding(key.WithKeys("a"))):
+		return m.openSelectedFlow(func(flow *model.Flow) tea.Cmd {
+			llmModel := NewLLMModel(flow, m.width, m.height)
+			pane := m.ws.SplitHSplit(&llmView{
+				LLMModel: &llmModel,
+				id:       m.nextViewID("llm"),
+			})
+			return pane.View.Init()
+		})
+	}
+	return false, nil
+}
+
+func (m *AppModel) openSelectedFlow(open func(*model.Flow) tea.Cmd) (bool, tea.Cmd) {
+	focused := m.ws.FocusedPane()
+	history, ok := focused.View.(*HistoryModel)
+	if !ok {
+		return false, nil
+	}
+	flow := history.SelectedFlow()
+	if flow == nil {
+		return true, nil
+	}
+	return true, open(flow)
+}
+
+func (m *AppModel) openScopePane() tea.Cmd {
+	scopeMgr := m.scopeMgr
+	if scopeMgr == nil {
+		scopeMgr = scope.NewManager(m.store)
+		m.scopeMgr = scopeMgr
+		m.repeaterSvc = repeater.NewHTTPService(scopeMgr)
+	}
+	scopeModel := NewScopeModel(scopeMgr, m.store, m.width, m.height)
+	pane := m.ws.SplitHSplit(&scopeView{
+		ScopeModel: &scopeModel,
+		id:         m.nextViewID("scope"),
+	})
+	return pane.View.Init()
+}
+
+func (m *AppModel) openReconPane() tea.Cmd {
+	reconModel := NewReconModel(m.reconMgr, m.llmAnalyzer, m.scopeMgr, m.width, m.height)
+	pane := m.ws.SplitHSplit(&reconView{
+		ReconModel: &reconModel,
+		id:         m.nextViewID("recon"),
+	})
+	return pane.View.Init()
+}
+
+func (m *AppModel) handleWorkspaceCommand(v workspace.CommandMsg) tea.Cmd {
+	// A split command creates a second history pane. This gives the generic
+	// workspace manager a concrete view without duplicating mutable model
+	// state, while number-key shortcuts open the functional workspaces.
+	history := NewHistoryModel(m.store, m.width, m.height)
+	history.id = m.nextViewID("history")
+	var pane *workspace.Pane
+	switch v.Action {
+	case workspace.CommandSplitVertical:
+		pane = m.ws.SplitVSplit(history)
+	case workspace.CommandSplitHorizontal:
+		pane = m.ws.SplitHSplit(history)
+	default:
+		return nil
+	}
+	return pane.View.Init()
+}
+
+func (m *AppModel) nextViewID(prefix string) string {
+	m.viewSeq++
+	return fmt.Sprintf("%s-%d", prefix, m.viewSeq)
 }
 
 // filterReconInScope returns a copy of the summary containing only in-scope hosts and endpoints.

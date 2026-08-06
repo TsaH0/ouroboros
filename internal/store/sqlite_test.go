@@ -18,16 +18,16 @@ func TestSQLiteStore_CRUD(t *testing.T) {
 
 	// Flow round-trip.
 	f := &model.Flow{
-		ID:        "flow-1",
-		Host:      "example.com",
-		Scheme:    "https",
-		Port:      443,
-		StartTime: time.Now(),
-		Duration:  100 * time.Millisecond,
-		State:     model.FlowCompleted,
+		ID:          "flow-1",
+		Host:        "example.com",
+		Scheme:      "https",
+		Port:        443,
+		StartTime:   time.Now(),
+		Duration:    100 * time.Millisecond,
+		State:       model.FlowCompleted,
 		ScopeStatus: model.ScopeInScope,
-		Tags:      []string{"test"},
-		Notes:     "test note",
+		Tags:        []string{"test"},
+		Notes:       "test note",
 		Request: &model.Message{
 			Method:      "GET",
 			URL:         "https://example.com/api",
@@ -215,6 +215,60 @@ func TestSQLiteStore_Concurrent(t *testing.T) {
 	}
 	if len(flows) != 50 {
 		t.Fatalf("expected 50 flows, got %d", len(flows))
+	}
+}
+func TestSQLiteStorePersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "persist.db")
+	ctx := context.Background()
+
+	first, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("open first store: %v", err)
+	}
+	rule := &scope.Rule{
+		ID:        "persisted-rule",
+		Kind:      scope.RuleKindHost,
+		Pattern:   "example.com",
+		MatchMode: scope.MatchModeLiteral,
+		Action:    scope.ActionInclude,
+		Enabled:   true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := first.SaveScopeRule(ctx, rule); err != nil {
+		t.Fatalf("save scope rule: %v", err)
+	}
+	if err := first.SaveFlow(ctx, &model.Flow{
+		ID:        "persisted-flow",
+		StartTime: time.Now(),
+		Host:      "example.com",
+		State:     model.FlowCompleted,
+	}); err != nil {
+		t.Fatalf("save flow: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first store: %v", err)
+	}
+
+	second, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("open second store: %v", err)
+	}
+	defer second.Close()
+
+	rules, err := second.LoadScopeRules(ctx)
+	if err != nil {
+		t.Fatalf("load persisted scope rules: %v", err)
+	}
+	if len(rules) != 1 || rules[0].ID != rule.ID {
+		t.Fatalf("persisted rules = %+v, want rule %q", rules, rule.ID)
+	}
+	flows, err := second.ListFlows(ctx)
+	if err != nil {
+		t.Fatalf("load persisted flows: %v", err)
+	}
+	if len(flows) != 1 || flows[0].ID != "persisted-flow" {
+		t.Fatalf("persisted flows = %+v, want persisted-flow", flows)
 	}
 }
 

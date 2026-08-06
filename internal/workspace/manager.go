@@ -18,6 +18,20 @@ type StatusBar struct {
 	Time        string
 }
 
+// Command identifies a workspace-level action requested by a key sequence.
+type Command string
+
+const (
+	CommandSplitHorizontal Command = "split-horizontal"
+	CommandSplitVertical   Command = "split-vertical"
+)
+
+// CommandMsg is emitted after a workspace command prefix is completed.
+// The application supplies the concrete view to split into the layout.
+type CommandMsg struct {
+	Action Command
+}
+
 // Manager owns the layout tree and routes events to panes.
 type Manager struct {
 	layout           *Layout
@@ -300,9 +314,13 @@ func (m *Manager) handleKeyPress(v tea.KeyPressMsg) tea.Cmd {
 		m.waitingForWindow = false
 		switch {
 		case key.Matches(v, key.NewBinding(key.WithKeys("s"))):
-			return nil // AppModel handles the actual split
+			return func() tea.Msg {
+				return CommandMsg{Action: CommandSplitHorizontal}
+			}
 		case key.Matches(v, key.NewBinding(key.WithKeys("v"))):
-			return nil
+			return func() tea.Msg {
+				return CommandMsg{Action: CommandSplitVertical}
+			}
 		case key.Matches(v, key.NewBinding(key.WithKeys("c"))):
 			m.CloseFocused()
 			return nil
@@ -313,7 +331,7 @@ func (m *Manager) handleKeyPress(v tea.KeyPressMsg) tea.Cmd {
 			m.Equalize()
 			return nil
 		default:
-			// Pass through to focused pane.
+			// Pass through to the focused pane.
 		}
 	}
 
