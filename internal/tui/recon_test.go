@@ -13,16 +13,26 @@ import (
 func TestAppReconTypingDoesNotBlock(t *testing.T) {
 	app := NewAppModel(store.NewMemoryStore(), nil, nil)
 	reconModel := NewReconModel(nil, nil, nil, 100, 40)
-	app.mode = ModeRecon
-	app.recon = &reconModel
+	app.ws.AddPane(&reconView{ReconModel: &reconModel})
 
 	started := time.Now()
 	updatedModel, cmd := app.Update(testKey("e"))
 	elapsed := time.Since(started)
 
 	updated := updatedModel.(*AppModel)
-	if got := updated.recon.target.Value(); got != "e" {
-		t.Fatalf("target value = %q, want %q", got, "e")
+	// Find the recon pane and check its target value.
+	panes := updated.ws.Layout().Panes()
+	var found bool
+	for _, p := range panes {
+		if rv, ok := p.View.(*reconView); ok {
+			if got := rv.target.Value(); got != "e" {
+				t.Fatalf("target value = %q, want %q", got, "e")
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("recon pane not found in workspace")
 	}
 	if cmd == nil {
 		t.Fatal("expected text input command to be returned to Bubble Tea")

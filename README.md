@@ -149,3 +149,4 @@ In the TUI, select a captured flow, press `a`, then press `a` again in the LLM v
 - **Milestone 4** — Repeater: resend captured requests with editable payloads (✓ done)
 - **Milestone 5** — LLM integration: AI-assisted analysis of intercepted traffic (✓ done)
 - **Milestone 6** — Persistent Storage + Scope Management: SQLite persistence with WAL, migrations, scope rules with include/exclude/wildcard/regex/priority, scope enforcement in Repeater/Recon/AI, Scope Management TUI screen, history scope badges (✓ done)
+- **Milestone 7** — Workspace & Pane Manager: multi-pane workspace with horizontal/vertical splits, Vim/tmux keyboard navigation (Ctrl+h/j/k/l, Ctrl+w s/v/c/o/=), View interface for all screens, status bar, background updates for all panes (✓ done)
