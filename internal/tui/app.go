@@ -80,6 +80,16 @@ func (m *AppModel) Init() tea.Cmd {
 	return nil
 }
 
+func waitForReconProgress(ch <-chan recon.ProgressUpdate) tea.Cmd {
+	return func() tea.Msg {
+		update, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return update
+	}
+}
+
 func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle back-to-list transitions and result messages from any sub-model.
 	switch v := mgs.(type) {
@@ -105,6 +115,13 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		if m.recon != nil {
 			updated, _ := m.recon.Update(v)
 			m.recon = &updated
+		}
+		return m, nil
+	case recon.ProgressUpdate:
+		if m.recon != nil {
+			updated, _ := m.recon.Update(v)
+			m.recon = &updated
+			return m, waitForReconProgress(m.reconMgr.ProgressChan())
 		}
 		return m, nil
 	}
@@ -219,10 +236,13 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 					m.mode = ModeHistory
 					m.recon = nil
 				case reconRunMsg:
-					return m, func() tea.Msg {
-						summary, err := m.reconMgr.Run(context.Background(), v.target)
-						return reconResultMsg{summary: summary, err: err}
-					}
+					return m, tea.Batch(
+						func() tea.Msg {
+							summary, err := m.reconMgr.Run(context.Background(), v.target)
+							return reconResultMsg{summary: summary, err: err}
+						},
+						waitForReconProgress(m.reconMgr.ProgressChan()),
+					)
 				case reconAIAnalyzeMsg:
 					return m, func() tea.Msg {
 						if m.llmAnalyzer == nil {

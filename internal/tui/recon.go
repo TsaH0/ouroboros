@@ -39,7 +39,6 @@ type reconKeyMap struct {
 	prevTab key.Binding
 }
 
-// reconRunMsg triggers a recon run.
 type reconRunMsg struct {
 	target string
 }
@@ -68,11 +67,10 @@ type ReconModel struct {
 	target   textinput.Model
 	summary  *recon.ReconSummary
 	aiResult *llm.ReconAnalysisResult
-
+	progress  *recon.ProgressUpdate
 	loading   bool
 	aiLoading bool
 	tab       reconTab
-
 	spinner  spinner.Model
 	viewport viewport.Model
 	keymap   reconKeyMap
@@ -145,7 +143,10 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 				return m, func() tea.Msg { return backToListMsg{} }
 			case key.Matches(v, m.keymap.analyze):
 				m.aiLoading = true
-				return m, func() tea.Msg { return reconAIAnalyzeMsg{summary: m.summary} }
+				return m, tea.Batch(
+					m.spinner.Tick,
+					func() tea.Msg { return reconAIAnalyzeMsg{summary: m.summary} },
+				)
 			case key.Matches(v, m.keymap.nextTab):
 				m.tab = (m.tab + 1) % reconTabAI
 				if m.tab == reconTabAI && m.aiResult == nil {
@@ -179,7 +180,11 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 				return m, nil
 			}
 			m.loading = true
-			return m, func() tea.Msg { return reconRunMsg{target: target} }
+			m.progress = nil
+			return m, tea.Batch(
+				m.spinner.Tick,
+				func() tea.Msg { return reconRunMsg{target: target} },
+			)
 		}
 
 		// Delegate to textinput for typing.
@@ -198,6 +203,11 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 			m.refreshViewport()
 		}
 		return m, nil
+
+	case recon.ProgressUpdate:
+		m.progress = &v
+		return m, nil
+
 
 	case reconAIResultMsg:
 		m.aiLoading = false
@@ -248,7 +258,11 @@ func (m ReconModel) View() tea.View {
 	var body string
 	switch {
 	case m.loading:
-		body = m.spinner.View() + " running recon..."
+		progTxt := "running providers..."
+		if m.progress != nil {
+			progTxt = fmt.Sprintf("running %s...", m.progress.Provider)
+		}
+		body = m.spinner.View() + " " + progTxt
 	case m.aiLoading:
 		body = m.spinner.View() + " AI analyzing..."
 	case m.summary == nil:
