@@ -194,26 +194,39 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 			return m, textinput.Blink
 
 		case key.Matches(v, m.keymap.importOne):
-			// Import current host from selected flow.
-			row := m.table.SelectedRow()
-			if row != nil && len(row) >= 3 {
-				host := row[2]
-				_, err := m.manager.AddRule(context.Background(), scope.Rule{
-					Kind:      scope.RuleKindHost,
-					Pattern:   host,
-					MatchMode: scope.MatchModeLiteral,
-					Action:    scope.ActionInclude,
-					Enabled:   true,
-					Priority:  10,
-				})
-				if err != nil {
-					m.err = err.Error()
-				}
-				m.rules = m.manager.Rules()
-				m.refreshTable()
+			// Import the most recently captured flow's host.
+			if m.store == nil {
+				m.err = "persistent store is not configured"
+				return m, nil
 			}
+			flows, err := m.store.ListFlows(context.Background())
+			if err != nil {
+				m.err = err.Error()
+				return m, nil
+			}
+			if len(flows) == 0 || flows[len(flows)-1].Host == "" {
+				m.err = "no captured flow host available"
+				return m, nil
+			}
+			_, err = m.manager.AddRule(context.Background(), scope.Rule{
+				Kind:      scope.RuleKindHost,
+				Pattern:   flows[len(flows)-1].Host,
+				MatchMode: scope.MatchModeLiteral,
+				Action:    scope.ActionInclude,
+				Enabled:   true,
+				Priority:  10,
+			})
+			if err != nil {
+				m.err = err.Error()
+			}
+			m.rules = m.manager.Rules()
+			m.refreshTable()
 
 		case key.Matches(v, m.keymap.importAll):
+			if m.store == nil {
+				m.err = "persistent store is not configured"
+				return m, nil
+			}
 			flows, err := m.store.ListFlows(context.Background())
 			if err != nil {
 				m.err = err.Error()
