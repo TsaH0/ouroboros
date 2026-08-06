@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"time"
 
-	"sentinel/internal/model"
-	"sentinel/internal/msg"
+	"ouroboros/internal/model"
+	"ouroboros/internal/msg"
 )
 
 // readBufferedConn wraps a net.Conn and a bufio.Reader, reading from the

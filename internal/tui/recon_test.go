@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"sentinel/internal/recon"
-	"sentinel/internal/store"
+	"ouroboros/internal/recon"
+	"ouroboros/internal/store"
 )
 
 func TestAppReconTypingDoesNotBlock(t *testing.T) {

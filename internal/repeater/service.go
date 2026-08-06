@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"sentinel/internal/model"
+	"ouroboros/internal/model"
 )
 
 // Edits holds user-modified fields for replaying a request.

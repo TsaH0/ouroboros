@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"sentinel/internal/model"
-	"sentinel/internal/repeater"
+	"ouroboros/internal/model"
+	"ouroboros/internal/repeater"
 )
 
 // RepeaterModel shows an editable request form and the replay response.
@@ -216,7 +216,7 @@ func (m RepeaterModel) View() tea.View {
 	if m.editing {
 		modeText = "INSERT"
 	}
-	header := headerStyle.Render(" Sentinel — Repeater [" + modeText + "]")
+	header := headerStyle.Render(" Ouroboros — Repeater [" + modeText + "]")
 
 	tallArea := max(6, height-9)
 	headersHeight := clamp(tallArea/3, 5, max(5, tallArea-5))

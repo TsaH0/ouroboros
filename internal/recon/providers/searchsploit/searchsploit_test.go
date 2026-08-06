@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"sentinel/internal/recon"
+	"ouroboros/internal/recon"
 )
 
 type fakeRunner struct {

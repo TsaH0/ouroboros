@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"sentinel/internal/model"
-	"sentinel/internal/recon"
+	"ouroboros/internal/model"
+	"ouroboros/internal/recon"
 )
 
 // Finding is a single security finding from LLM analysis.

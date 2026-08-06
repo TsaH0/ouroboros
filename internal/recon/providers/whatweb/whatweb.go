@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"sentinel/internal/recon"
+	"ouroboros/internal/recon"
 )
 
 // Provider implements recon.ReconProvider for WhatWeb technology detection.

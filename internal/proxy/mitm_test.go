@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"sentinel/internal/scope"
-	"sentinel/internal/store"
+	"ouroboros/internal/scope"
+	"ouroboros/internal/store"
 )
 
 func TestHTTPSMITMFramesBufferedResponse(t *testing.T) {

@@ -15,11 +15,11 @@ import (
 	"charm.land/bubbletea/v2"
 	"github.com/oklog/ulid/v2"
 
-	"sentinel/internal/intercept"
-	"sentinel/internal/model"
-	"sentinel/internal/msg"
-	"sentinel/internal/scope"
-	"sentinel/internal/store"
+	"ouroboros/internal/intercept"
+	"ouroboros/internal/model"
+	"ouroboros/internal/msg"
+	"ouroboros/internal/scope"
+	"ouroboros/internal/store"
 )
 
 var hopHeaders = []string{

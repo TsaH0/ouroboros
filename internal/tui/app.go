@@ -12,12 +12,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"sentinel/internal/llm"
-	"sentinel/internal/msg"
-	"sentinel/internal/proxy"
-	"sentinel/internal/recon"
-	"sentinel/internal/repeater"
-	"sentinel/internal/store"
+	"ouroboros/internal/llm"
+	"ouroboros/internal/msg"
+	"ouroboros/internal/proxy"
+	"ouroboros/internal/recon"
+	"ouroboros/internal/repeater"
+	"ouroboros/internal/store"
 )
 
 // Mode is the current TUI view mode.
@@ -31,7 +31,7 @@ const (
 	ModeRecon
 )
 
-// AppModel is the top-level Bubble Tea model for the Sentinel TUI.
+// AppModel is the top-level Bubble Tea model for the Ouroboros TUI.
 type AppModel struct {
 	store                  *store.InMemoryFlowStore
 	proxy                  *proxy.Proxy
@@ -404,8 +404,7 @@ func (m AppModel) View() tea.View {
 	}
 
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
-		Width(m.width).Align(lipgloss.Center).
-		Render(" Sentinel — HTTP History")
+		Render(" Ouroboros — HTTP History")
 	body := m.table.View()
 	footer := m.help.ShortHelpView([]key.Binding{
 		m.keymap.quit, m.keymap.enter, m.keymap.repeater, m.keymap.llm, m.keymap.recon,

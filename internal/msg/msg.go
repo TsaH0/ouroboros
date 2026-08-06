@@ -1,6 +1,6 @@
 package msg
 
-import "sentinel/internal/model"
+import "ouroboros/internal/model"
 
 // --- Events (dispatched from proxy/backend to TUI) ---
 

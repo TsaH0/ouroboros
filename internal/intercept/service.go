@@ -3,7 +3,7 @@ package intercept
 import (
 	"regexp"
 
-	"sentinel/internal/model"
+	"ouroboros/internal/model"
 )
 
 // Rule defines a single intercept matching rule.

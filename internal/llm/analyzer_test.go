@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"sentinel/internal/model"
-	"sentinel/internal/recon"
+	"ouroboros/internal/model"
+	"ouroboros/internal/recon"
 )
 
 type mockProvider struct {

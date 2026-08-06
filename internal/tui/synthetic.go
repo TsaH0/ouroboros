@@ -8,8 +8,8 @@ import (
 	"charm.land/bubbletea/v2"
 	"github.com/oklog/ulid/v2"
 
-	"sentinel/internal/model"
-	"sentinel/internal/msg"
+	"ouroboros/internal/model"
+	"ouroboros/internal/msg"
 )
 
 // GenerateSyntheticFlow creates a randomized FlowCompleted event for demo purposes.
@@ -33,7 +33,7 @@ func GenerateSyntheticFlow() tea.Msg {
 		Method:      method,
 		URL:         scheme + "://" + host + path,
 		HTTPVersion: "HTTP/1.1",
-		Headers:     map[string][]string{"Host": {host}, "User-Agent": {"Sentinel/0.1"}},
+		Headers:     map[string][]string{"Host": {host}, "User-Agent": {"Ouroboros/0.1"}},
 		Body:        nil,
 	}
 

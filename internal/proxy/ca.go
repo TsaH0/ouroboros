@@ -27,7 +27,7 @@ func CACertDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".config", "sentinel")
+	dir := filepath.Join(home, ".config", "ouroboros")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
@@ -115,8 +115,8 @@ func generateCA() (*CACert, error) {
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "Sentinel MITM CA",
-			Organization: []string{"Sentinel"},
+			CommonName:   "Ouroboros MITM CA",
+			Organization: []string{"Ouroboros"},
 		},
 		NotBefore:             now.Add(-24 * time.Hour),
 		NotAfter:              now.Add(10 * 365 * 24 * time.Hour),

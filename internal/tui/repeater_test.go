@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"sentinel/internal/model"
+	"ouroboros/internal/model"
 )
 
 func testKey(s string) tea.KeyPressMsg {

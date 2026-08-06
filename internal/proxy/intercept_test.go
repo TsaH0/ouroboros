@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"sentinel/internal/intercept"
-	"sentinel/internal/msg"
-	"sentinel/internal/scope"
-	"sentinel/internal/store"
+	"ouroboros/internal/intercept"
+	"ouroboros/internal/msg"
+	"ouroboros/internal/scope"
+	"ouroboros/internal/store"
 )
 
 func TestInterceptForward(t *testing.T) {

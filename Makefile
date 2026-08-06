@@ -10,4 +10,4 @@ test-race:
 	go test -race ./...
 
 run:
-	go run ./cmd/sentinel
+	go run ./cmd/ouroboros

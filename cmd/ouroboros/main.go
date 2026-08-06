@@ -14,18 +14,18 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"sentinel/internal/intercept"
-	"sentinel/internal/llm"
-	"sentinel/internal/proxy"
-	"sentinel/internal/recon"
-	"sentinel/internal/recon/providers/gau"
-	"sentinel/internal/recon/providers/searchsploit"
-	"sentinel/internal/recon/providers/subfinder"
-	"sentinel/internal/recon/providers/wayback"
-	"sentinel/internal/recon/providers/whatweb"
-	"sentinel/internal/scope"
-	"sentinel/internal/store"
-	"sentinel/internal/tui"
+	"ouroboros/internal/intercept"
+	"ouroboros/internal/llm"
+	"ouroboros/internal/proxy"
+	"ouroboros/internal/recon"
+	"ouroboros/internal/recon/providers/gau"
+	"ouroboros/internal/recon/providers/searchsploit"
+	"ouroboros/internal/recon/providers/subfinder"
+	"ouroboros/internal/recon/providers/wayback"
+	"ouroboros/internal/recon/providers/whatweb"
+	"ouroboros/internal/scope"
+	"ouroboros/internal/store"
+	"ouroboros/internal/tui"
 )
 
 func main() {

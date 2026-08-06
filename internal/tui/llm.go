@@ -9,8 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"sentinel/internal/llm"
-	"sentinel/internal/model"
+	"ouroboros/internal/llm"
+	"ouroboros/internal/model"
 )
 
 // LLMViewKind selects what the LLM view shows.
@@ -129,9 +129,9 @@ func (m LLMModel) Update(mgs tea.Msg) (LLMModel, tea.Cmd) {
 }
 
 func (m LLMModel) View() tea.View {
-	title := " Sentinel — LLM Analysis"
+	title := " Ouroboros — LLM Analysis"
 	if m.bulkKind == LLMViewBulk {
-		title = " Sentinel — LLM Bulk Analysis"
+		title = " Ouroboros — LLM Bulk Analysis"
 	}
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
 		Width(m.width).Align(lipgloss.Center).

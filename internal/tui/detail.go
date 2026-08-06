@@ -9,8 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"sentinel/internal/model"
-	"sentinel/internal/msg"
+	"ouroboros/internal/model"
+	"ouroboros/internal/msg"
 )
 
 // DetailModel shows a single flow's request and response details.
@@ -80,7 +80,7 @@ func (m DetailModel) Update(mgs tea.Msg) (DetailModel, tea.Cmd) {
 func (m DetailModel) View() tea.View {
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
 		Width(m.width).Align(lipgloss.Center).
-		Render(" Sentinel — Flow Detail")
+		Render(" Ouroboros — Flow Detail")
 
 	helpLine := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
 		Render("f: forward  d: drop  a: analyze  q: back")

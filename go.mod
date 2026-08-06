@@ -1,4 +1,4 @@
-module sentinel
+module ouroboros
 
 go 1.26.5
 

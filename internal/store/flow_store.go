@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"sentinel/internal/model"
+	"ouroboros/internal/model"
 )
 
 // FlowStore is the persistence abstraction for HTTP flows.

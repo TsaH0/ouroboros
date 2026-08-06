@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"sentinel/internal/llm"
-	"sentinel/internal/recon"
+	"ouroboros/internal/llm"
+	"ouroboros/internal/recon"
 )
 
 // reconTab selects which data view to display.
@@ -237,8 +237,7 @@ func (m *ReconModel) refreshViewport() {
 func (m ReconModel) View() tea.View {
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
 		Width(m.width).Align(lipgloss.Center).
-		Render(" Sentinel — Recon Intelligence")
-
+		Render(" Ouroboros — Recon Intelligence")
 	var tabBar string
 	if m.summary != nil {
 		var tabs []string

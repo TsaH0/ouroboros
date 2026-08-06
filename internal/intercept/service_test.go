@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"sentinel/internal/model"
+	"ouroboros/internal/model"
 )
 
 func TestMatcher_NoRules(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"sentinel/internal/model"
+	"ouroboros/internal/model"
 )
 
 func TestInMemoryFlowStore_SaveAndGet(t *testing.T) {

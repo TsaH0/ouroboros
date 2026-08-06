@@ -44,8 +44,7 @@ func SignHost(ca *CACert, hostname string) (*tls.Certificate, error) {
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   hostname,
-			Organization: []string{"Sentinel MITM"},
+			Organization: []string{"Ouroboros MITM"},
 		},
 		DNSNames:    []string{hostname},
 		NotBefore:   now.Add(-24 * time.Hour),

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"sentinel/internal/model"
+	"ouroboros/internal/model"
 )
 
 func TestHTTPService_Replay_Passthrough(t *testing.T) {
