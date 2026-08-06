@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -43,9 +44,13 @@ type AppModel struct {
 	detail      *DetailModel
 	repeater    *RepeaterModel
 	llm         *LLMModel
-	width       int
-	height      int
-	ready       bool
+	// llmContext holds prior analysis conversation for context-aware analysis.
+	llmContext []llm.Message
+	// lastBulkResult caches the most recent bulk analysis for reference.
+	lastBulkResult *llm.BulkAnalysisResult
+	width          int
+	height         int
+	ready          bool
 }
 
 type appKeyMap struct {
@@ -107,6 +112,14 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.mode = ModeHistory
 					m.detail = nil
+				case llmAnalyzeMsg:
+					// Switch from detail to LLM view with single-flow analysis.
+					l := NewLLMModel(v.flow, m.width, m.height)
+					m.mode = ModeLLM
+					m.llm = &l
+					m.detail = nil
+					// Re-dispatch so the LLM handler runs immediately.
+					return m, func() tea.Msg { return v }
 				}
 			}
 			return m, nil
@@ -141,11 +154,33 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 					m.mode = ModeHistory
 					m.llm = nil
 				case llmAnalyzeMsg:
+					if v.bulkKind == LLMViewBulk {
+						return m, func() tea.Msg {
+							if m.llmAnalyzer == nil {
+								return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, GEMINI_API_KEY, or run Ollama)")}
+							}
+							flows, _ := m.store.List(context.Background())
+							result, err := m.llmAnalyzer.AnalyzeBulk(context.Background(), flows)
+							if err == nil {
+								m.lastBulkResult = result
+								// Store context for future single-flow analysis.
+								m.llmContext = buildBulkContext(result)
+							}
+							return llmResultMsg{bulkResult: result, err: err}
+						}
+					}
 					return m, func() tea.Msg {
 						if m.llmAnalyzer == nil {
 							return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, GEMINI_API_KEY, or run Ollama)")}
 						}
-						result, err := m.llmAnalyzer.AnalyzeFlow(context.Background(), v.flow)
+						result, err := m.llmAnalyzer.AnalyzeFlow(context.Background(), v.flow, m.llmContext)
+						if err == nil && result != nil {
+							// Append this Q&A to the running context.
+							m.llmContext = append(m.llmContext,
+								llm.Message{Role: llm.RoleUser, Content: "Analyzed flow " + v.flow.ID},
+								llm.Message{Role: llm.RoleAssistant, Content: result.Summary},
+							)
+						}
 						return llmResultMsg{result: result, err: err}
 					}
 				}
@@ -198,19 +233,10 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case key.Matches(v, m.keymap.llm):
-			row := m.table.SelectedRow()
-			if row != nil {
-				shortID := row[0]
-				flows, _ := m.store.List(context.Background())
-				for _, f := range flows {
-					if len(f.ID) >= 8 && f.ID[len(f.ID)-8:] == shortID {
-						l := NewLLMModel(f, m.width, m.height)
-						m.mode = ModeLLM
-						m.llm = &l
-						break
-					}
-				}
-			}
+			// 'a' from history = bulk analysis of all captured traffic.
+			l := NewBulkLLMModel(m.width, m.height)
+			m.mode = ModeLLM
+			m.llm = &l
 		}
 
 	case msg.FlowCompleted:
@@ -259,8 +285,9 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	case llmResultMsg:
 		if m.llm != nil {
 			m.llm.result = v.result
+			m.llm.bulkResult = v.bulkResult
 			m.llm.loading = false
-			m.llm.viewport.SetContent(renderLLMResult(v.result, v.err))
+			m.llm.viewport.SetContent(renderLLMResult(v.result, v.bulkResult, v.err))
 		}
 		return m, nil
 	}
@@ -268,6 +295,25 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(mgs)
 	return m, cmd
+}
+
+// buildBulkContext converts a bulk analysis result into LLM conversation
+// context for subsequent single-flow analysis.
+func buildBulkContext(result *llm.BulkAnalysisResult) []llm.Message {
+	if result == nil {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("Prior bulk traffic analysis:\n")
+	b.WriteString("Summary: " + result.Summary + "\n")
+	for _, f := range result.Findings {
+		b.WriteString(fmt.Sprintf("- flow %s [%s] %s: %s\n", f.FlowID, f.Severity, f.Title, f.Why))
+	}
+	b.WriteString("\nUse this context when analyzing individual flows.\n")
+	return []llm.Message{
+		{Role: llm.RoleUser, Content: b.String()},
+		{Role: llm.RoleAssistant, Content: "Understood. I will consider this traffic context when analyzing subsequent flows."},
+	}
 }
 
 func (m AppModel) View() tea.View {

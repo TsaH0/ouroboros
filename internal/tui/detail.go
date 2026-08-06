@@ -25,6 +25,7 @@ type DetailModel struct {
 type detailKeyMap struct {
 	forward key.Binding
 	drop    key.Binding
+	analyze key.Binding
 	back    key.Binding
 }
 
@@ -40,6 +41,7 @@ func NewDetailModel(flow *model.Flow, width, height int) DetailModel {
 		keymap: detailKeyMap{
 			forward: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "forward")),
 			drop:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "drop")),
+			analyze: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "analyze")),
 			back:    key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
 		},
 	}
@@ -63,6 +65,8 @@ func (m DetailModel) Update(mgs tea.Msg) (DetailModel, tea.Cmd) {
 			return m, func() tea.Msg { return msg.ForwardInterceptedFlow{FlowID: m.flow.ID} }
 		case key.Matches(v, m.keymap.drop):
 			return m, func() tea.Msg { return msg.DropInterceptedFlow{FlowID: m.flow.ID} }
+		case key.Matches(v, m.keymap.analyze):
+			return m, func() tea.Msg { return llmAnalyzeMsg{flow: m.flow, bulkKind: LLMViewSingle} }
 		case key.Matches(v, m.keymap.back):
 			return m, func() tea.Msg { return backToListMsg{} }
 		}
@@ -79,7 +83,7 @@ func (m DetailModel) View() tea.View {
 		Render(" Sentinel — Flow Detail")
 
 	helpLine := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
-		Render("f: forward  d: drop  q: back")
+		Render("f: forward  d: drop  a: analyze  q: back")
 
 	body := m.viewport.View()
 

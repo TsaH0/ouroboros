@@ -256,6 +256,12 @@ func (p *geminiProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 		"generationConfig": map[string]any{
 			"temperature": 0.2,
 		},
+		"safetySettings": []map[string]any{
+			{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+			{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+			{"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+			{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+		},
 	}
 	if len(systemParts) > 0 {
 		body["systemInstruction"] = map[string]any{"parts": systemParts}
