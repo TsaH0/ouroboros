@@ -339,7 +339,7 @@ func (m *AppModel) importSelectedFlowAsScope() (bool, tea.Cmd) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	_, err := m.scopeMgr.AddRule(context.Background(), scope.Rule{
+	_, err := m.scopeMgr.AddRuleInMemory(scope.Rule{
 		Kind:      scope.RuleKindHost,
 		Pattern:   host,
 		MatchMode: scope.MatchModeLiteral,
@@ -546,18 +546,19 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		status := m.scopeMgr.HostStatus(host)
 		// Remove any existing literal host rules for this host
 		// so the toggle is clean (no conflicting duplicates).
-		m.scopeMgr.RemoveHostRules(context.Background(), host)
+		// Use in-memory methods so rules don't persist to the DB.
+		m.scopeMgr.RemoveHostRulesInMemory(host)
 
 		if status == model.ScopeInScope {
-			// Was in scope (via wildcard default) → add explicit exclude.
-			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
+			// Was in scope → add explicit exclude (session only).
+			_, _ = m.scopeMgr.AddRuleInMemory(scope.Rule{
 				Kind: scope.RuleKindHost, Pattern: host,
 				MatchMode: scope.MatchModeLiteral, Action: scope.ActionExclude,
 				Enabled: true, Priority: 100,
 			})
 		} else {
-			// Was out of scope or unknown → add explicit include.
-			_, _ = m.scopeMgr.AddRule(context.Background(), scope.Rule{
+			// Was out of scope or unknown → add explicit include (session only).
+			_, _ = m.scopeMgr.AddRuleInMemory(scope.Rule{
 				Kind: scope.RuleKindHost, Pattern: host,
 				MatchMode: scope.MatchModeLiteral, Action: scope.ActionInclude,
 				Enabled: true, Priority: 100,

@@ -78,6 +78,25 @@ func (m *Manager) AddRule(ctx context.Context, r Rule) (Rule, error) {
 	return r, nil
 }
 
+// AddRuleInMemory adds a rule without persisting to the store.
+// Used for session-only scope toggles (s key, i key) so the
+// next session starts clean.
+func (m *Manager) AddRuleInMemory(r Rule) (Rule, error) {
+	if err := validateRule(r); err != nil {
+		return r, err
+	}
+	now := time.Now()
+	r.ID = ulid.MustNewDefault(now).String()
+	r.CreatedAt = now
+	r.UpdatedAt = now
+
+	m.mu.Lock()
+	m.rules = append(m.rules, r)
+	m.mu.Unlock()
+	m.rebuild()
+	return r, nil
+}
+
 // DeleteRule removes a rule by ID, persists the deletion, and rebuilds.
 func (m *Manager) DeleteRule(ctx context.Context, id string) error {
 	if m.store != nil {
@@ -160,6 +179,27 @@ func (m *Manager) RemoveHostRules(ctx context.Context, host string) int {
 			if m.store != nil {
 				_ = m.store.DeleteScopeRule(ctx, r.ID)
 			}
+		} else {
+			filtered = append(filtered, r)
+		}
+	}
+	m.rules = filtered
+	m.mu.Unlock()
+	if removed > 0 {
+		m.rebuild()
+	}
+	return removed
+}
+
+// RemoveHostRulesInMemory removes literal host rules without persisting
+// the deletion to the store. Used for session-only scope toggles.
+func (m *Manager) RemoveHostRulesInMemory(host string) int {
+	var removed int
+	m.mu.Lock()
+	filtered := make([]Rule, 0, len(m.rules))
+	for _, r := range m.rules {
+		if r.Kind == RuleKindHost && r.MatchMode == MatchModeLiteral && r.Pattern == host {
+			removed++
 		} else {
 			filtered = append(filtered, r)
 		}

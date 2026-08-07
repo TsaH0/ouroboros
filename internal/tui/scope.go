@@ -214,7 +214,7 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 			if h, _, err := net.SplitHostPort(host); err == nil {
 				host = h
 			}
-			_, err = m.manager.AddRule(context.Background(), scope.Rule{
+			_, err = m.manager.AddRuleInMemory(scope.Rule{
 				Kind:      scope.RuleKindHost,
 				Pattern:   host,
 				MatchMode: scope.MatchModeLiteral,
@@ -248,7 +248,7 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 					continue
 				}
 				seen[host] = true
-				_, err := m.manager.AddRule(context.Background(), scope.Rule{
+				_, err := m.manager.AddRuleInMemory(scope.Rule{
 					Kind:      scope.RuleKindHost,
 					Pattern:   host,
 					MatchMode: scope.MatchModeLiteral,
