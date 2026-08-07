@@ -565,6 +565,14 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		}
 		history.RefreshScopeBadges(m.scopeMgr)
 		return true, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("f"))):
+		// Toggle scope filter: show all flows vs only in-scope.
+		focused := m.ws.FocusedPane()
+		if history, ok := focused.View.(*HistoryModel); ok {
+			history.scopeFilter = !history.scopeFilter
+			history.rebuildRows()
+		}
+		return true, nil
 
 	}
 	return false, nil

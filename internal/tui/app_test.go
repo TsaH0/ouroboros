@@ -28,9 +28,33 @@ func ctrlKey(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: r, Mod: tea.ModCtrl})
 }
 
+// scopeWithWildcard creates a scope manager with a default * include rule,
+// so test flows are visible in the history table (scope filter is ON).
+func scopeWithWildcard(st store.Store) *scope.Manager {
+	sc := scope.NewManager(st)
+	_, _ = sc.AddRule(context.Background(), scope.Rule{
+		Kind: scope.RuleKindHost, Pattern: "*",
+		MatchMode: scope.MatchModeWildcard, Action: scope.ActionInclude,
+		Enabled: true, Priority: 0,
+	})
+	return sc
+}
+
+// scopeWithHost creates a scope manager with a literal include rule
+// for the given host, so the flow is visible in history (scope filter ON).
+func scopeWithHost(st store.Store, host string) *scope.Manager {
+	sc := scope.NewManager(st)
+	_, _ = sc.AddRule(context.Background(), scope.Rule{
+		Kind: scope.RuleKindHost, Pattern: host,
+		MatchMode: scope.MatchModeLiteral, Action: scope.ActionInclude,
+		Enabled: true, Priority: 10,
+	})
+	return sc
+}
+
 func TestHistoryShortcutsOpenScopeAndReturn(t *testing.T) {
 	st := store.NewMemoryStore()
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	if _, cmd := app.Update(appKey("4")); cmd != nil {
@@ -125,7 +149,7 @@ func TestHistoryLoadsPersistedFlows(t *testing.T) {
 
 func TestGlobalKeyOpensHistoryFromScope(t *testing.T) {
 	st := store.NewMemoryStore()
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	// Open scope from history pane.
@@ -152,7 +176,7 @@ func TestGlobalKeyOpensHistoryFromScope(t *testing.T) {
 
 func TestReconEditingSuppressesGlobalKeys(t *testing.T) {
 	st := store.NewMemoryStore()
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	// Open recon — target input is focused and editing.
@@ -182,7 +206,7 @@ func TestGlobalKeyOpensScopeFromDetail(t *testing.T) {
 	if err := st.SaveFlow(context.Background(), flow); err != nil {
 		t.Fatalf("save flow: %v", err)
 	}
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	// Open detail from history.
@@ -208,7 +232,7 @@ func TestGlobalKeyOpensScopeFromDetail(t *testing.T) {
 
 func TestCtrlWCQuitsOnLastPane(t *testing.T) {
 	st := store.NewMemoryStore()
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	// Only one pane (history). Ctrl+w c should produce AllClosedMsg.
@@ -247,7 +271,7 @@ func TestBackToListQuitsOnLastPane(t *testing.T) {
 	if err := st.SaveFlow(context.Background(), flow); err != nil {
 		t.Fatalf("save flow: %v", err)
 	}
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	// Open detail from history (2 panes).
@@ -287,7 +311,7 @@ func TestGlobalImportSelectedFlowAsScope(t *testing.T) {
 	if err := st.SaveFlow(context.Background(), flow); err != nil {
 		t.Fatalf("save flow: %v", err)
 	}
-	sc := scope.NewManager(st)
+	sc := scopeWithHost(st, "import.example.com")
 	app := NewAppModel(st, nil, sc)
 
 	// History is focused, flow is selected. Press 'i' to import as scope.
@@ -302,16 +326,19 @@ func TestGlobalImportSelectedFlowAsScope(t *testing.T) {
 		t.Fatalf("focused view = %T, want *scopeView", app.ws.FocusedPane().View)
 	}
 
-	// Verify the rule was added.
+	// Verify the rule was added (pre-existing scopeWithHost rule + imported).
 	rules := sc.Rules()
-	if len(rules) != 1 {
-		t.Fatalf("rule count = %d, want 1", len(rules))
+	if len(rules) != 2 {
+		t.Fatalf("rule count = %d, want 2", len(rules))
 	}
-	if rules[0].Pattern != "import.example.com" {
-		t.Fatalf("rule pattern = %q, want import.example.com", rules[0].Pattern)
+	found := false
+	for _, r := range rules {
+		if r.Pattern == "import.example.com" && r.Kind == scope.RuleKindHost {
+			found = true
+		}
 	}
-	if rules[0].Kind != scope.RuleKindHost {
-		t.Fatalf("rule kind = %q, want host", rules[0].Kind)
+	if !found {
+		t.Fatalf("import.example.com rule not found in %v", rules)
 	}
 }
 
@@ -328,7 +355,7 @@ func TestGlobalImportFromHistoryWithScopeOpen(t *testing.T) {
 	if err := st.SaveFlow(context.Background(), flow); err != nil {
 		t.Fatalf("save flow: %v", err)
 	}
-	sc := scope.NewManager(st)
+	sc := scopeWithHost(st, "import2.example.com")
 	app := NewAppModel(st, nil, sc)
 
 	// Open scope pane first (2 panes: history + scope).
@@ -346,11 +373,17 @@ func TestGlobalImportFromHistoryWithScopeOpen(t *testing.T) {
 		t.Fatalf("pane count = %d, want 2", len(panes))
 	}
 	rules := sc.Rules()
-	if len(rules) != 1 {
-		t.Fatalf("rule count = %d, want 1", len(rules))
+	if len(rules) != 2 {
+		t.Fatalf("rule count = %d, want 2", len(rules))
 	}
-	if rules[0].Pattern != "import2.example.com" {
-		t.Fatalf("rule pattern = %q, want import2.example.com", rules[0].Pattern)
+	found := false
+	for _, r := range rules {
+		if r.Pattern == "import2.example.com" && r.Kind == scope.RuleKindHost {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("import2.example.com rule not found in %v", rules)
 	}
 }
 
@@ -410,7 +443,7 @@ func TestColonCommandLsProjects(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	st := store.NewMemoryStore()
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	// Save two projects.
@@ -433,7 +466,7 @@ func TestColonCommandLsProjects(t *testing.T) {
 
 func TestColonCommandQuit(t *testing.T) {
 	st := store.NewMemoryStore()
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
 	app.Update(appKey(":"))
@@ -450,7 +483,7 @@ func TestColonCommandQuit(t *testing.T) {
 
 func TestHistoryScopeToggleKey(t *testing.T) {
 	st := store.NewMemoryStore()
-	sc := scope.NewManager(st)
+	sc := scopeWithWildcard(st)
 
 	// Seed a default allow-all rule like main.go does.
 	_, _ = sc.AddRule(context.Background(), scope.Rule{

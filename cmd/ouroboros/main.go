@@ -80,21 +80,8 @@ func main() {
 	if err := scopeMgr.Load(ctx); err != nil {
 		log.Printf("warning: load scope rules: %v", err)
 	}
-	// Seed a default allow-all rule if no rules exist.
-	if len(scopeMgr.Rules()) == 0 {
-		_, err := scopeMgr.AddRule(ctx, scope.Rule{
-			Kind:      scope.RuleKindHost,
-			Pattern:   "*",
-			MatchMode: scope.MatchModeWildcard,
-			Action:    scope.ActionInclude,
-			Enabled:   true,
-			Priority:  0,
-			Note:      "default allow-all",
-		})
-		if err != nil {
-			log.Printf("warning: seed default scope rule: %v", err)
-		}
-	}
+	// No default scope rules — start with an empty scope.
+	// The user adds hosts/domains explicitly via the Scope pane.
 
 	// Initialize intercept service (intercept nothing by default).
 	is := intercept.NewMatcher(nil)

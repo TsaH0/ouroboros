@@ -17,13 +17,14 @@ import (
 
 // HistoryModel wraps the history table as a workspace.View.
 type HistoryModel struct {
-	id       string
-	table    table.Model
-	rows     []table.Row
-	width    int
-	height   int
-	store    store.Store
-	scopeMgr *scope.Manager
+	id          string
+	table       table.Model
+	rows        []table.Row
+	width       int
+	height      int
+	store       store.Store
+	scopeMgr    *scope.Manager
+	scopeFilter bool // true = only show in-scope flows
 }
 
 // historyColumns builds table columns that fit within width.
@@ -81,12 +82,13 @@ func NewHistoryModel(st store.Store, sc *scope.Manager, width, height int) *Hist
 	t.SetHeight(height - 2)
 
 	history := &HistoryModel{
-		id:       "history",
-		table:    t,
-		width:    width,
-		height:   height,
-		store:    st,
-		scopeMgr: sc,
+		id:          "history",
+		table:       t,
+		width:       width,
+		height:      height,
+		store:       st,
+		scopeMgr:    sc,
+		scopeFilter: true, // only show in-scope flows by default
 	}
 	history.reload()
 	return history
@@ -101,7 +103,7 @@ func (m *HistoryModel) ID() string {
 func (m *HistoryModel) Title() string { return "History" }
 func (m *HistoryModel) Init() tea.Cmd { return nil }
 func (m *HistoryModel) HelpText() string {
-	return "⏎: detail  r: repeater  a: AI  s: scope  q: quit"
+	return "⏎: detail  r: repeater  a: AI  s: scope  f: filter  q: quit"
 }
 func (m *HistoryModel) IsEditing() bool { return false }
 
@@ -151,38 +153,10 @@ func (m *HistoryModel) Update(mgs tea.Msg) (workspace.View, tea.Cmd) {
 	return m, cmd
 }
 
-// RefreshScopeBadges recalculates the Scope column for all rows
-// using the given scope manager.
-func (m *HistoryModel) RefreshScopeBadges(sc *scope.Manager) {
-	if sc == nil || m.store == nil {
-		return
-	}
-	flows, err := m.store.ListFlows(context.Background())
-	if err != nil {
-		return
-	}
-	for i, flow := range flows {
-		if i >= len(m.rows) {
-			break
-		}
-		status := sc.HostStatus(flow.Host)
-		badge := "?"
-		switch status {
-		case model.ScopeInScope:
-			badge = "IN"
-			flow.ScopeStatus = model.ScopeInScope
-		case model.ScopeOutOfScope:
-			badge = "OUT"
-			flow.ScopeStatus = model.ScopeOutOfScope
-		}
-		// Find the Scope column index (it's always present).
-		scopeIdx := m.scopeColIndex()
-		if scopeIdx >= 0 && scopeIdx < len(m.rows[i]) {
-			m.rows[i][scopeIdx] = badge
-		}
-	}
-	m.table.SetRows(m.rows)
-	m.table.UpdateViewport()
+// RefreshScopeBadges recalculates the Scope column and re-applies the
+// scope filter. Called after scope rules change (e.g. pressing s).
+func (m *HistoryModel) RefreshScopeBadges(_ *scope.Manager) {
+	m.rebuildRows()
 }
 
 // scopeColIndex returns the column index of the Scope column.
@@ -236,6 +210,33 @@ func (m *HistoryModel) appendFlow(flow *model.Flow) {
 	if flow == nil {
 		return
 	}
+
+	// Compute scope status first so we can filter.
+	scopeBadge := "?"
+	var scopeStatus model.ScopeStatus
+	if m.scopeMgr != nil {
+		scopeStatus = m.scopeMgr.HostStatus(flow.Host)
+		switch scopeStatus {
+		case model.ScopeInScope:
+			scopeBadge = "IN"
+		case model.ScopeOutOfScope:
+			scopeBadge = "OUT"
+		}
+	} else {
+		scopeStatus = flow.ScopeStatus
+		switch scopeStatus {
+		case model.ScopeInScope:
+			scopeBadge = "IN"
+		case model.ScopeOutOfScope:
+			scopeBadge = "OUT"
+		}
+	}
+
+	// If scope filter is on, skip out-of-scope and unknown flows.
+	if m.scopeFilter && scopeStatus != model.ScopeInScope {
+		return
+	}
+
 	status := 0
 	path := ""
 	method := ""
@@ -245,25 +246,6 @@ func (m *HistoryModel) appendFlow(flow *model.Flow) {
 	}
 	if flow.Response != nil {
 		status = flow.Response.StatusCode
-	}
-
-	// Compute live scope badge from the scope manager if available.
-	scopeBadge := "?"
-	if m.scopeMgr != nil {
-		s := m.scopeMgr.HostStatus(flow.Host)
-		switch s {
-		case model.ScopeInScope:
-			scopeBadge = "IN"
-		case model.ScopeOutOfScope:
-			scopeBadge = "OUT"
-		}
-	} else {
-		switch flow.ScopeStatus {
-		case model.ScopeInScope:
-			scopeBadge = "IN"
-		case model.ScopeOutOfScope:
-			scopeBadge = "OUT"
-		}
 	}
 
 	cols := m.table.Columns()
@@ -304,7 +286,11 @@ func shortFlowID(id string) string {
 }
 
 func (m *HistoryModel) View() string {
-	return m.table.View()
+	body := m.table.View()
+	if m.scopeFilter {
+		body = "  [scope filter ON — f to toggle]\n" + body
+	}
+	return body
 }
 
 func (m *HistoryModel) Focus() {}
