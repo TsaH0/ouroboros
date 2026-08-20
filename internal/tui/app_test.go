@@ -209,21 +209,22 @@ func TestGlobalKeyOpensScopeFromDetail(t *testing.T) {
 	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
-	// Open detail from history.
+	// Open detail as floating overlay; workspace pane count stays unchanged.
 	app.Update(appKey("enter"))
 	panes := app.ws.Layout().Panes()
-	if len(panes) != 2 {
-		t.Fatalf("pane count after detail = %d, want 2", len(panes))
+	if len(panes) != 1 {
+		t.Fatalf("pane count after floating detail = %d, want 1", len(panes))
 	}
-	if _, ok := app.ws.FocusedPane().View.(*detailView); !ok {
-		t.Fatalf("focused view = %T, want *detailView", app.ws.FocusedPane().View)
+	if _, ok := app.floating.(*detailView); !ok {
+		t.Fatalf("floating view = %T, want *detailView", app.floating)
 	}
 
-	// Detail is NOT editing, so 4 opens scope.
+	// Close overlay, then 4 opens scope workspace pane.
+	app.closeFloating()
 	app.Update(appKey("4"))
 	panes = app.ws.Layout().Panes()
-	if len(panes) != 3 {
-		t.Fatalf("pane count after scope spawn = %d, want 3", len(panes))
+	if len(panes) != 2 {
+		t.Fatalf("pane count after scope spawn = %d, want 2", len(panes))
 	}
 	if _, ok := app.ws.FocusedPane().View.(*scopeView); !ok {
 		t.Fatalf("focused view = %T, want *scopeView", app.ws.FocusedPane().View)
@@ -274,17 +275,17 @@ func TestBackToListQuitsOnLastPane(t *testing.T) {
 	sc := scopeWithWildcard(st)
 	app := NewAppModel(st, nil, sc)
 
-	// Open detail from history (2 panes).
+	// Open detail as floating overlay; workspace still has one pane.
 	app.Update(appKey("enter"))
-	if len(app.ws.Layout().Panes()) != 2 {
-		t.Fatalf("pane count = %d, want 2", len(app.ws.Layout().Panes()))
+	if len(app.ws.Layout().Panes()) != 1 || app.floating == nil {
+		t.Fatalf("floating detail should not add workspace pane")
 	}
 
-	// Close detail with backToListMsg. Should go back to 1 pane.
+	// Close detail overlay. Workspace remains with history.
 	updated, _ := app.Update(backToListMsg{})
 	app = updated.(*AppModel)
-	if len(app.ws.Layout().Panes()) != 1 {
-		t.Fatalf("pane count after first close = %d, want 1", len(app.ws.Layout().Panes()))
+	if len(app.ws.Layout().Panes()) != 1 || app.floating != nil {
+		t.Fatalf("floating close should preserve one history pane")
 	}
 
 	// Close the last pane (history) with backToListMsg. Should quit.
