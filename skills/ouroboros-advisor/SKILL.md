@@ -24,6 +24,7 @@ This skill equips agents with a **Multi-Layer Progressive Security Triaging Tool
 7. **Layer 7**: 404 Tech Stack Fingerprinting
 8. **Layer 8**: SearchSploit Structured LLM Commands
 9. **Layer 9**: Triage Validation 7-Question Gate
+10. **Layer 10**: Active Recon Pipeline (subfinder/httpx/nuclei) — companion to passive triage
 
 ## How To Use
 
@@ -229,4 +230,72 @@ Before claiming a finding is vuln, run this gate. One fail = kill.
 **Pre-submit gates:** Reality Check (reproducible), Impact Validation, Deduplication, Report Quality (title: `[Bug Class] in [Endpoint] allows [actor] to [impact]`, copy-paste curl, <600 words, CVSS matching impact).
 
 **CVSS quick:** IDOR read PII 6.5 Medium, IDOR write 7.5 High, Auth bypass admin 9.8 Critical, Stored XSS 8.8 High, SQLi dump 8.6 High, SSRF metadata 9.1 Critical.
+
+---
+
+## Layer 10: Active Recon Pipeline (companion to passive triage)
+
+Ouroboros captures **passive** traffic (what the browser sends). For **active** recon — subdomain enum, live-host probing, tech fingerprinting, URL/JS discovery, parameter discovery, and vuln scanning — use the standard CLI tool pipeline. Each phase has a reference file in `references/` with exact commands, flags, and gotchas.
+
+### Scope & authorization gate (every time)
+1. Target must be in an authorized program (HackerOne/Bugcrowd/Intigriti listing or private engagement letter). Only test in-scope assets.
+2. Check rate limits / testing restrictions. Start at 10-20 threads, not 200. Many programs forbid automated scanners.
+3. No destructive testing (`sqlmap --os-shell`, mass writes, DoS fuzzing) unless explicitly allowed.
+
+### Pipeline phases
+
+| Phase | Goal | Primary tools | Reference |
+|---|---|---|---|
+| 1. Subdomain enum | Find all subdomains | `subfinder`, `amass`, `assetfinder`, `crt.sh` | `references/subdomain-enum.md` |
+| 2. Live host / port probing | Which hosts respond, ports, tech | `httpx`, `naabu`, `dnsx` | `references/http-probing-and-fingerprinting.md` |
+| 3. Tech fingerprinting | Stack, CMS, WAF | `whatweb`, `httpx -tech-detect`, `wappalyzer-cli` | `references/http-probing-and-fingerprinting.md` |
+| 4. URL / endpoint / JS discovery | Historical + crawled URLs, JS endpoints | `waybackurls`, `gau`, `katana`, `hakrawler`, `getJS`, `LinkFinder` | `references/url-and-endpoint-discovery.md` |
+| 5. Parameter & content discovery | Hidden params, dirs, files | `arjun`, `paramspider`, `ffuf`, `gobuster`, `feroxbuster` | `references/parameter-and-content-discovery.md` |
+| 6. Vulnerability scanning | XSS, CORS, SQLi, SSRF, open redirect, CRLF, takeovers, CVEs | `nuclei`, `dalfox`, `XSStrike`, `Corsy`, `sqlmap`, `subzy`, `crlfuzz` | `references/vuln-scanning.md` |
+| 7. Visual recon / triage | Screenshot everything | `gowitness`, `aquatone` | `references/vuln-scanning.md` |
+| 8. Reporting | Write up for fast triage | — | `references/reporting.md` |
+
+### Ouroboros integration
+
+Ouroboros has a built-in recon engine (Recon tab `5`) that runs `subfinder`, `gau`, `waybackurls`, `whatweb`, `searchsploit` directly. Use it for phases 1, 4, 3, and CVE lookup. For phases 2, 5, 6, 7 (active probing, fuzzing, vuln scanning, screenshots) use the external CLI tools above.
+
+**Workflow:**
+1. Passive: `query.sh overview` + `query.sh hosts` + `query.sh endpoints` to map what the browser already touched.
+2. Active: run the recon pipeline (phases 1-7) to expand the attack surface beyond what was browsed.
+3. Feed active results back: browse discovered endpoints through the Ouroboros proxy → captured in DB → `query.sh triage` finds anomalies.
+4. Prove: `query.sh curl <id>` → edit in repeater (`r` in TUI) → `diff <id1> <id2>`.
+
+### Quick end-to-end (tools installed, scope confirmed)
+
+```bash
+export TARGET=example.com
+mkdir -p recon/$TARGET/{subdomains,httpx,urls,js,params,content,screenshots,vulns,reports}
+cd recon/$TARGET
+
+subfinder -d $TARGET -silent | tee subdomains/all.txt \
+  | httpx -silent -tech-detect -status-code -title -o httpx/live.txt
+
+cat httpx/live.txt | cut -d' ' -f1 > httpx/live_urls.txt
+waybackurls $TARGET | tee urls/wayback.txt
+gau $TARGET | tee urls/gau.txt
+cat urls/*.txt | sort -u > urls/all.txt
+nuclei -l httpx/live_urls.txt -t cves/ -o vulns/nuclei.txt
+dalfox file urls/all.txt -o vulns/dalfox.txt
+```
+
+### Check installed tools
+```bash
+for t in subfinder amass assetfinder httpx naabu waybackurls gau katana whatweb ffuf gobuster nuclei dalfox sqlmap gowitness; do
+  command -v $t >/dev/null 2>&1 && echo "$t: installed" || echo "$t: MISSING"
+done
+```
+
+### Go tools offline note
+Most recon tools are Go binaries. If `proxy.golang.org` is unreachable:
+```bash
+export GOPROXY=direct
+go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+```
+
+Read the relevant `references/*.md` for exact commands per phase. Don't hold all phases in context at once — pull in references as you move through the pipeline.
 

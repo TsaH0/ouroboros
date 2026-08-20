@@ -86,7 +86,14 @@ Default destination:
 ```text
 ~/.agents/skills/ouroboros-advisor/
 ├── SKILL.md
-└── scripts/query.sh
+├── scripts/query.sh
+└── references/
+    ├── subdomain-enum.md
+    ├── http-probing-and-fingerprinting.md
+    ├── url-and-endpoint-discovery.md
+    ├── parameter-and-content-discovery.md
+    ├── vuln-scanning.md
+    └── reporting.md
 ```
 
 Custom destination:
