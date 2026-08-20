@@ -2,7 +2,7 @@
 
 <div align="center">
 
-```
+```text
   ___    ___  ___  ___      _
  / _ \ / __\/ _ \/ __\__ _(_)__
 | | | / /  | | | / /  / // / _ \
@@ -10,272 +10,146 @@
  \___/\____/\___/\____/_//_/\___|
 ```
 
-**A lightweight, AI-powered web security workbench for the terminal.**
+**Terminal-first HTTP intercepting proxy and security workbench.**
+
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](https://go.dev/)
+[![Release](https://img.shields.io/github/v/release/TsaH0/ouroboros)](https://github.com/TsaH0/ouroboros/releases)
 
 </div>
 
----
+## What it does
 
-## Why Ouroboros?
+Ouroboros captures HTTP/HTTPS traffic, lets you inspect and edit requests, and replays them from one terminal UI. It stores traffic locally in SQLite and keeps scope controls close to every action.
 
-Ouroboros is a terminal-first HTTP security workbench — an intercepting proxy, traffic inspector, request repeater, and AI-assisted analyzer in a single Go binary. No Electron, no Docker, no 500 MB of RAM just to inspect a request. It runs in your terminal, uses less than 30 MB of memory, and gets out of your way.
+- HTTP and HTTPS MITM proxy on `127.0.0.1:8080`
+- HTTP History with all-traffic recording and scope filtering
+- Intercept Queue (`3`) with editable floating request editor
+- Request Repeater with method, URL, headers, and body editing
+- Scope rules and named presets
+- Project save/load for engagement scope
+- Recon providers: `subfinder`, `gau`, `waybackurls`, `whatweb`, `searchsploit`
+- SQLite WAL persistence at `~/.config/ouroboros/ouroboros.db`
+- Optional Ouroboros Advisor skill for offline traffic triage through `query.sh`
 
-### Key benefits
+## Install
 
-- **AI-assisted vulnerability analysis** — Pipe captured traffic to any LLM (OpenAI, Gemini, NVIDIA NIM, or local Ollama) for instant security analysis. Get severity-ranked findings, exploitation context, and remediation suggestions without leaving the terminal.
-- **Multi-pane workspace** — Split your screen into History, Repeater, Scope, and Recon panes. All panes run independently — captured traffic keeps flowing while you analyze, replay, and pivot.
-- **Vim/tmux keybindings** — Navigate panes with `Ctrl+h/j/k/l`, split with `Ctrl+w s/v`, open views with number keys. Zero learning curve if you live in the terminal.
-- **Integrated recon** — Subfinder, gau, waybackurls, whatweb, and searchsploit are orchestrated automatically. Enter a domain, get a full recon report with hosts, endpoints, technologies, and known CVEs — then send it to AI for prioritization.
-- **Scope management** — Define exactly which hosts are in scope. Out-of-scope traffic is filtered from view. Repeater blocks replay to out-of-scope targets. AI analysis only considers in-scope flows. Safe testing by design.
-- **Request repeater** — Capture, edit, and replay any HTTP request. Modify headers, body, method, URL. See the response inline. Scope enforcement prevents accidental out-of-scope requests.
-- **SQLite persistence** — All flows, scope rules, recon results, and AI analyses are stored in a local SQLite database with WAL mode. Restart the app and your data is still there.
-- **Project save/load** — Vim-style `:w`/`:e` commands save and load scope configurations as named project files. Switch between engagements instantly.
-- **Minimal footprint** — Pure Go, single binary, no runtime dependencies. ~30 MB RAM with a full proxy, MITM, and TUI running. Compare that to 500 MB+ for browser-based alternatives.
-
----
-
-## Quick Start
-
-Requires Go 1.25+.
+Requires Go 1.26+.
 
 ```sh
 go install github.com/TsaH0/ouroboros/cmd/ouroboros@latest
+```
+
+Ensure `$GOBIN` (normally `$(go env GOPATH)/bin`) is in `PATH`, then run:
+
+```sh
 ouroboros
 ```
 
-Or from source:
+Or download source:
+
 ```sh
 git clone https://github.com/TsaH0/ouroboros.git
 cd ouroboros
-make run
+make build
+./bin/ouroboros
 ```
 
-The proxy listens on `:8080`. Set your browser/system proxy to `127.0.0.1:8080` and browse. Captured traffic appears in the History pane.
+## HTTPS setup
 
-### HTTPS interception
+Generate the Ouroboros CA certificate:
 
 ```sh
-# Print the CA certificate for browser installation
-go run ./cmd/ouroboros --install-ca
+ouroboros --install-ca > /tmp/ouroboros-ca.pem
 ```
 
-Import the printed certificate into your browser's trust store to enable HTTPS MITM.
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  TUI (Bubble Tea v2)                                          │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐         │
-│  │ History  │ │ Repeater │ │  Scope   │ │  Recon   │         │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘         │
-│       │            │            │            │                │
-│       ▼            ▼            ▼            ▼                │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │  Workspace Manager (panes, splits, focus, key routing) │  │
-│  └───────────────────────────┬─────────────────────────────┘  │
-└──────────────────────────────┼───────────────────────────────┘
-                               │
-┌──────────────────────────────┼───────────────────────────────┐
-│  Domain Layer                │                                │
-│  ┌──────────────────────────▼──────────────────────────────┐ │
-│  │  Services (Scope, Intercept, Repeater, LLM Analyzer)    │ │
-│  └──────────────────────────┬──────────────────────────────┘ │
-│  ┌──────────────────────────▼──────────────────────────────┐ │
-│  │  Store                                                   │ │
-│  │  ┌──────────────┐    ┌──────────────────────────────┐    │ │
-│  │  │ InMemory    │    │ SQLite (WAL, migrations)     │    │ │
-│  │  └──────────────┘    └──────────────────────────────┘    │ │
-│  └──────────────────────────────────────────────────────────┘ │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  Proxy Engine                                            │ │
-│  │  ┌──────────────┐    ┌──────────────────────────────┐    │ │
-│  │  │ HTTP Handler │    │ MITM (CONNECT, TLS)          │    │ │
-│  │  └──────────────┘    └──────────────────────────────┘    │ │
-│  └──────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Keybindings
-
-### Global (any pane)
-
-| Key | Action |
-|-----|--------|
-| `:` | Open command bar (vim-style: `:w`, `:e`, `:ls`, `:q`) |
-| `0` | Spawn HTTP History pane |
-| `4` | Open Scope pane |
-| `5` | Open Recon pane |
-| `i` | Import selected flow's host into scope |
-| `Ctrl+h/j/k/l` | Move focus between panes |
-| `Ctrl+w s` | Horizontal split |
-| `Ctrl+w v` | Vertical split |
-| `Ctrl+w c` | Close focused pane |
-| `Ctrl+w o` | Close all other panes |
-| `Ctrl+w =` | Equalize pane sizes |
-| `Ctrl+c` | Quit |
-
-### History pane
-
-| Key | Action |
-|-----|--------|
-| `enter` | Open flow detail |
-| `r` | Open in Repeater |
-| `a` | AI analysis |
-| `s` | Toggle scope for selected flow's host |
-| `f` | Toggle scope filter (show only in-scope / show all) |
-| `q` | Quit |
-
-### Scope pane
-
-| Key | Action |
-|-----|--------|
-| `a` | Add rule (4-step wizard: action → kind → pattern → priority) |
-| `d` / `x` | Delete rule |
-| `space` / `e` | Toggle rule enabled |
-| `/` | Search rules |
-| `i` | Import latest captured flow's host |
-| `I` | Import all captured flow hosts |
-| `q` / `esc` | Close pane |
-
-### Repeater pane
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` / `tab` | Navigate fields |
-| `i` | Edit field |
-| `enter` / `s` | Send replay |
-| `esc` | Normal mode / back |
-| `q` | Close pane |
-
-### Recon pane
-
-| Key | Action |
-|-----|--------|
-| `enter` | Run recon on target |
-| `tab` / `shift+tab` | Switch tabs (Summary, Hosts, Endpoints, Tech, Vulns, AI) |
-| `a` | AI analysis of recon results |
-| `q` / `esc` | Close pane |
-
-### Command bar (`:`)
-
-| Command | Action |
-|---------|--------|
-| `:w <name>` | Save current scope rules as a project file |
-| `:e <name>` | Load a project's scope rules |
-| `:ls` | List saved projects |
-| `:q` | Quit |
-
-Projects are stored as JSON in `~/.config/ouroboros/projects/<name>.json`.
-
----
-
-## LLM Integration
-
-Ouroboros supports multiple AI providers for automated traffic analysis:
+Install `/tmp/ouroboros-ca.pem` into your OS/browser trust store. On Arch Linux, OS trust uses:
 
 ```sh
-# NVIDIA NIM (free tier available)
-export NVIDIA_API_KEY="..."
-go run ./cmd/ouroboros --provider=nvidia --model=poolside/laguna-xs-2.1
-
-# Google Gemini
-export GEMINI_API_KEY="..."
-go run ./cmd/ouroboros --provider=gemini --model=gemini-2.5-flash
-
-# OpenAI
-export OPENAI_API_KEY="..."
-go run ./cmd/ouroboros --provider=openai --model=gpt-4o-mini
-
-# Local Ollama (100% offline, no API key needed)
-go run ./cmd/ouroboros --provider=ollama --model=llama3.2
+sudo cp /tmp/ouroboros-ca.pem /etc/ca-certificates/trust-source/anchors/ouroboros.crt
+sudo update-ca-trust
 ```
 
-In the TUI, select a captured flow and press `a` to analyze it. For bulk analysis of all in-scope traffic, use the LLM pane's `a` key — it sends every in-scope flow to the model and returns a prioritized findings report.
+Firefox and Chromium-based browsers may need separate certificate-store configuration. Never share the generated CA private key.
 
-AI analysis considers your scope rules — only in-scope traffic is sent to the model.
+Set browser proxy to `127.0.0.1:8080`, then browse. Ouroboros records flows automatically.
 
----
+## Advisor skill
 
-## Recon Tools
-
-Ouroboros orchestrates local CLI tools for reconnaissance. Install them and ensure they're in `PATH`:
+Go installs binaries, not agent skills. Ouroboros therefore does **not** silently write files into a user's home directory during normal startup. Install skill explicitly:
 
 ```sh
-# Arch Linux (with BlackArch)
-sudo pacman -S subfinder gau waybackurls whatweb exploitdb
-
-# Portable Go installs
-go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install github.com/lc/gau/v2/cmd/gau@latest
-go install github.com/tomnomnom/waybackurls@latest
+ouroboros --install-skill
 ```
 
-Open Recon (`5`), enter a target domain, press `enter`. Ouroboros runs all providers in parallel and presents results in tabs:
+Default destination:
 
-| Tab | Content |
-|-----|--------|
-| Summary | Provider status, finding counts |
-| Hosts | Discovered subdomains with scope status |
-| Endpoints | URLs from gau/waybackurls |
-| Tech | Detected technologies (whatweb) |
-| Vulns | Known CVEs (searchsploit) |
-| AI | LLM-prioritized findings |
+```text
+~/.agents/skills/ouroboros-advisor/
+├── SKILL.md
+└── scripts/query.sh
+```
 
----
-
-## Scope Management
-
-Define exactly which hosts are in scope. The scope system enforces boundaries across the entire tool:
-
-- **History filter** — Only in-scope flows appear by default (`f` to toggle)
-- **Repeater** — Blocks replay to out-of-scope hosts
-- **AI analysis** — Only in-scope flows are sent to the LLM
-- **Recon** — Results are filtered to in-scope hosts
-
-Rules support three match modes:
-- **Literal** — exact hostname match (e.g., `api.example.com`)
-- **Wildcard** — glob pattern (e.g., `*.example.com`)
-- **Regex** — anchored regex (prefix with `re:`)
-
----
-
-## Build & Test
+Custom destination:
 
 ```sh
-make fmt        # Format all Go source
-make test       # Run unit tests
-make test-race  # Run tests with race detector
-make run        # Build and run
+ouroboros --install-skill --skill-dir ~/.gemini/antigravity-cli/skills/ouroboros-advisor
 ```
 
----
+The skill reads local database only. It requires `sqlite3`; `jq` is useful for JSON output:
 
-## Flags
+```sh
+sudo pacman -S sqlite jq
+bash ~/.agents/skills/ouroboros-advisor/scripts/query.sh overview
+bash ~/.agents/skills/ouroboros-advisor/scripts/query.sh hosts
+bash ~/.agents/skills/ouroboros-advisor/scripts/query.sh triage
+bash ~/.agents/skills/ouroboros-advisor/scripts/query.sh flow <flow-id>
+```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--proxy-addr` | `:8080` | Proxy listen address |
-| `--db` | `~/.config/ouroboros/ouroboros.db` | SQLite database path |
-| `--memory` | `false` | Use in-memory store (no persistence) |
-| `--provider` | auto | LLM provider: `openai`, `ollama`, `nvidia`, `gemini` |
-| `--model` | varies | LLM model name |
-| `--api-key` | env | LLM API key |
-| `--api-base` | provider default | LLM API base URL |
-| `--install-ca` | | Print CA cert for browser installation |
+Use `OUROBOROS_DB=/path/to/ouroboros.db` to inspect another database.
 
----
+## TUI quick reference
 
-## Disclaimer
+| Key | Action |
+|---|---|
+| `0` | HTTP History |
+| `3` | Intercept Queue |
+| `4` | Scope manager |
+| `5` | Recon |
+| `I` | Toggle interception |
+| `enter` | Open selected flow |
+| `r` | Open Repeater |
+| `s` | Toggle selected host scope in current session |
+| `f` | Filter history to in-scope flows |
+| `a` | Add scope rule |
+| `C` | Clear displayed history, keep database |
+| `D` | Wipe persisted history after confirmation |
+| `q` / `esc` | Back or close floating pane |
 
-**Authorized Use Only.** Ouroboros is a security testing tool. You MUST only use it against systems you own or have explicit written permission to test. Unauthorized interception of network traffic is illegal in most jurisdictions. The authors assume no liability for misuse.
+Intercept workflow: press `I`, open queue with `3`, select flow, press `enter`, edit with `e`, then `f` to forward or `d` to drop. Paste works with bracketed terminal paste (`Ctrl+Shift+V`, terminal-dependent).
 
----
+## Scope safety
+
+Scope defaults to all hosts so traffic remains visible. Repeater enforces scope before sending. Use `4` to create explicit host, path, URL, wildcard, or regex rules. `s` in History is an in-memory session toggle; use `a` in Scope when you want a persisted rule.
+
+Only test systems you own or have permission to test. PortSwigger Web Security Academy labs are suitable authorized targets.
+
+## Data and privacy
+
+- Database: `~/.config/ouroboros/ouroboros.db`
+- CA: `~/.config/ouroboros/ca.pem`
+- No cloud service required for proxy, storage, scope, or triage
+- Captured cookies, authorization headers, and request bodies may contain secrets; protect the database
+
+## Development
+
+```sh
+go test ./...
+go vet ./...
+make build
+```
+
+Architecture: Go, Bubble Tea v2, Bubbles v2, Lip Gloss v2, SQLite WAL. See `skills/ouroboros-advisor/SKILL.md` for the complete progressive triage workflow.
 
 ## License
 
-MIT
+See repository license and release notes.

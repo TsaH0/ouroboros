@@ -23,12 +23,15 @@ import (
 	"github.com/TsaH0/ouroboros/internal/recon/providers/wayback"
 	"github.com/TsaH0/ouroboros/internal/recon/providers/whatweb"
 	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/skill"
 	"github.com/TsaH0/ouroboros/internal/store"
 	"github.com/TsaH0/ouroboros/internal/tui"
 )
 
 func main() {
 	installCA := flag.Bool("install-ca", false, "Print the CA certificate for browser installation")
+	installSkill := flag.Bool("install-skill", false, "Install Ouroboros Advisor skill to ~/.agents/skills")
+	skillDir := flag.String("skill-dir", "", "Skill install directory (default: ~/.agents/skills/ouroboros-advisor)")
 	proxyAddr := flag.String("proxy-addr", ":8080", "Proxy listen address")
 	dbPath := flag.String("db", "", "SQLite database path (default: ~/.config/ouroboros/ouroboros.db)")
 	memory := flag.Bool("memory", false, "Use in-memory store instead of SQLite")
@@ -36,6 +39,13 @@ func main() {
 
 	if *installCA {
 		if err := proxy.PrintCACert(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *installSkill {
+		if err := skill.Install(*skillDir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
