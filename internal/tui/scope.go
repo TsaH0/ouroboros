@@ -14,41 +14,56 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"ouroboros/internal/msg"
 	"ouroboros/internal/scope"
 	"ouroboros/internal/store"
 )
 
-// ScopeModel is the TUI model for managing scope rules.
+// ScopeModel is the TUI model for managing scope rules and named presets.
+// Layout:
+//
+//	Top panel:  Preset list (navigate with tab/shift-tab or j/k when focused)
+//	Bottom panel: Rules for the active preset
 type ScopeModel struct {
 	manager   *scope.Manager
 	store     store.Store
 	rules     []scope.Rule
-	table     table.Model
+	presets   []scope.Preset
+	table     table.Model        // rule table
+	presetTbl table.Model        // preset table
 	input     textinput.Model
 	search    textinput.Model
 	searching bool
 	adding    bool
 	addStep   int // 0=action, 1=kind, 2=pattern, 3=priority
 	addRule   scope.Rule
-	viewport  viewport.Model
-	width     int
-	height    int
-	err       string
-	keymap    scopeKeyMap
+	// Preset creation state.
+	addingPreset bool
+	presetInput  textinput.Model
+	viewport     viewport.Model
+	width        int
+	height       int
+	err          string
+	presetFocus  bool // true = navigating preset list; false = navigating rule list
+	keymap       scopeKeyMap
 }
 
 type scopeKeyMap struct {
-	back      key.Binding
-	add       key.Binding
-	delete    key.Binding
-	toggle    key.Binding
-	search    key.Binding
-	importOne key.Binding
-	importAll key.Binding
+	back         key.Binding
+	add          key.Binding
+	delete       key.Binding
+	toggle       key.Binding
+	search       key.Binding
+	importOne    key.Binding
+	importAll    key.Binding
+	newPreset    key.Binding
+	switchFocus  key.Binding
+	activatePreset key.Binding
 }
 
 func NewScopeModel(mgr *scope.Manager, st store.Store, width, height int) ScopeModel {
-	cols := []table.Column{
+	// Rule table columns.
+	ruleCols := []table.Column{
 		{Title: "En", Width: 4},
 		{Title: "Action", Width: 8},
 		{Title: "Kind", Width: 6},
@@ -57,12 +72,26 @@ func NewScopeModel(mgr *scope.Manager, st store.Store, width, height int) ScopeM
 		{Title: "Note", Width: 20},
 	}
 
-	t := table.New(
-		table.WithColumns(cols),
+	rt := table.New(
+		table.WithColumns(ruleCols),
 		table.WithFocused(true),
 	)
-	t.SetWidth(width - 2)
-	t.SetHeight(height - 6)
+	rt.SetWidth(width - 2)
+	ruleH := max(3, height-12) // leave room for preset panel
+	rt.SetHeight(ruleH)
+
+	// Preset table columns.
+	presetCols := []table.Column{
+		{Title: "Active", Width: 6},
+		{Title: "Name", Width: 30},
+		{Title: "Rules", Width: 8},
+	}
+	pt := table.New(
+		table.WithColumns(presetCols),
+		table.WithFocused(false),
+	)
+	pt.SetWidth(width - 2)
+	pt.SetHeight(5) // show up to 5 presets at a time
 
 	ti := textinput.New()
 	ti.Placeholder = "pattern (e.g. *.example.com)"
@@ -72,29 +101,42 @@ func NewScopeModel(mgr *scope.Manager, st store.Store, width, height int) ScopeM
 	s.Placeholder = "search patterns..."
 	s.CharLimit = 128
 
-	vp := viewport.New(viewport.WithWidth(max(20, width-2)), viewport.WithHeight(max(3, height-6)))
+	pi := textinput.New()
+	pi.Placeholder = "preset name (e.g. BugBounty-App1)"
+	pi.CharLimit = 64
+
+	vp := viewport.New(viewport.WithWidth(max(20, width-2)), viewport.WithHeight(max(3, height-12)))
 
 	rules := mgr.Rules()
+	presets := mgr.ListPresets()
+
 	sm := ScopeModel{
-		manager:  mgr,
-		store:    st,
-		rules:    rules,
-		table:    t,
-		input:    ti,
-		search:   s,
-		viewport: vp,
-		width:    width,
-		height:   height,
+		manager:     mgr,
+		store:       st,
+		rules:       rules,
+		presets:     presets,
+		table:       rt,
+		presetTbl:   pt,
+		input:       ti,
+		search:      s,
+		presetInput: pi,
+		viewport:    vp,
+		width:       width,
+		height:      height,
 		keymap: scopeKeyMap{
-			back:      key.NewBinding(key.WithKeys("q", "esc")),
-			add:       key.NewBinding(key.WithKeys("a")),
-			delete:    key.NewBinding(key.WithKeys("d", "x")),
-			toggle:    key.NewBinding(key.WithKeys("space", " ", "e")),
-			search:    key.NewBinding(key.WithKeys("/")),
-			importOne: key.NewBinding(key.WithKeys("i")),
-			importAll: key.NewBinding(key.WithKeys("I")),
+			back:           key.NewBinding(key.WithKeys("q", "esc")),
+			add:            key.NewBinding(key.WithKeys("a")),
+			delete:         key.NewBinding(key.WithKeys("d", "x")),
+			toggle:         key.NewBinding(key.WithKeys("space", " ", "e")),
+			search:         key.NewBinding(key.WithKeys("/")),
+			importOne:      key.NewBinding(key.WithKeys("i")),
+			importAll:      key.NewBinding(key.WithKeys("I")),
+			newPreset:      key.NewBinding(key.WithKeys("n")),
+			switchFocus:    key.NewBinding(key.WithKeys("tab")),
+			activatePreset: key.NewBinding(key.WithKeys("enter")),
 		},
 	}
+	sm.refreshPresetTable()
 	sm.refreshTable()
 	return sm
 }
@@ -109,12 +151,18 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 		m.width = v.Width
 		m.height = v.Height
 		m.table.SetWidth(v.Width - 2)
-		m.table.SetHeight(v.Height - 6)
+		m.table.SetHeight(max(3, v.Height-12))
+		m.presetTbl.SetWidth(v.Width - 2)
 		m.viewport.SetWidth(max(20, v.Width-2))
-		m.viewport.SetHeight(max(3, v.Height-6))
+		m.viewport.SetHeight(max(3, v.Height-12))
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// Preset name input.
+		if m.addingPreset {
+			return m.updatePresetAdd(v)
+		}
+		// Rule search mode.
 		if m.searching {
 			switch {
 			case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
@@ -132,16 +180,44 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 			}
 			return m, nil
 		}
-
+		// Rule add wizard.
 		if m.adding {
 			return m.updateAddFlow(v)
 		}
 
+		// Global keys.
 		switch {
 		case key.Matches(v, m.keymap.back):
 			return m, func() tea.Msg { return backToListMsg{} }
 
-		case key.Matches(v, m.keymap.add):
+		case key.Matches(v, m.keymap.switchFocus):
+			// Tab switches focus between preset panel and rule panel.
+			m.presetFocus = !m.presetFocus
+			if m.presetFocus {
+				m.presetTbl.Focus()
+				m.table.Blur()
+			} else {
+				m.table.Focus()
+				m.presetTbl.Blur()
+			}
+			return m, nil
+
+		case key.Matches(v, m.keymap.newPreset):
+			// 'n' always opens new preset dialog regardless of focus.
+			m.addingPreset = true
+			m.presetInput.SetValue("")
+			m.presetInput.Focus()
+			return m, textinput.Blink
+
+		case m.presetFocus && key.Matches(v, m.keymap.activatePreset):
+			// Enter on a preset → activate it.
+			return m.activateSelectedPreset()
+
+		case m.presetFocus && key.Matches(v, m.keymap.delete):
+			// Delete a preset.
+			return m.deleteSelectedPreset()
+
+		case !m.presetFocus && key.Matches(v, m.keymap.add):
 			m.adding = true
 			m.addStep = 0
 			m.err = ""
@@ -157,7 +233,7 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 			m.input.Focus()
 			return m, textinput.Blink
 
-		case key.Matches(v, m.keymap.delete):
+		case !m.presetFocus && key.Matches(v, m.keymap.delete):
 			row := m.table.SelectedRow()
 			if row != nil && len(row) >= 4 {
 				pattern := row[3]
@@ -173,7 +249,7 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 				m.refreshTable()
 			}
 
-		case key.Matches(v, m.keymap.toggle):
+		case !m.presetFocus && key.Matches(v, m.keymap.toggle):
 			row := m.table.SelectedRow()
 			if row != nil && len(row) >= 4 {
 				pattern := row[3]
@@ -189,14 +265,13 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 				m.refreshTable()
 			}
 
-		case key.Matches(v, m.keymap.search):
+		case !m.presetFocus && key.Matches(v, m.keymap.search):
 			m.searching = true
 			m.search.SetValue("")
 			m.search.Focus()
 			return m, textinput.Blink
 
-		case key.Matches(v, m.keymap.importOne):
-			// Import the most recently captured flow's host.
+		case !m.presetFocus && key.Matches(v, m.keymap.importOne):
 			if m.store == nil {
 				m.err = "persistent store is not configured"
 				return m, nil
@@ -225,7 +300,7 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 			m.rules = m.manager.Rules()
 			m.refreshTable()
 
-		case key.Matches(v, m.keymap.importAll):
+		case !m.presetFocus && key.Matches(v, m.keymap.importAll):
 			if m.store == nil {
 				m.err = "persistent store is not configured"
 				return m, nil
@@ -265,9 +340,101 @@ func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 		}
 	}
 
+	// Delegate table navigation to the focused table.
 	var cmd tea.Cmd
-	m.table, cmd = m.table.Update(mgs)
+	if m.presetFocus {
+		m.presetTbl, cmd = m.presetTbl.Update(mgs)
+	} else {
+		m.table, cmd = m.table.Update(mgs)
+	}
 	return m, cmd
+}
+
+func (m *ScopeModel) activateSelectedPreset() (ScopeModel, tea.Cmd) {
+	row := m.presetTbl.SelectedRow()
+	if row == nil || len(row) < 2 {
+		return *m, nil
+	}
+	presetName := row[1]
+	// Find by name in cached presets.
+	var id, name string
+	if presetName == "Global" {
+		id = ""
+		name = "Global"
+	} else {
+		for _, p := range m.presets {
+			if p.Name == presetName {
+				id = p.ID
+				name = p.Name
+				break
+			}
+		}
+	}
+	if err := m.manager.ActivatePreset(context.Background(), id); err != nil {
+		m.err = err.Error()
+		return *m, nil
+	}
+	m.rules = m.manager.Rules()
+	m.refreshTable()
+	m.refreshPresetTable()
+	return *m, func() tea.Msg {
+		return msg.ScopePresetChangedMsg{PresetID: id, PresetName: name}
+	}
+}
+
+func (m *ScopeModel) deleteSelectedPreset() (ScopeModel, tea.Cmd) {
+	row := m.presetTbl.SelectedRow()
+	if row == nil || len(row) < 2 {
+		return *m, nil
+	}
+	presetName := row[1]
+	if presetName == "Global" {
+		m.err = "cannot delete the Global scope"
+		return *m, nil
+	}
+	for _, p := range m.presets {
+		if p.Name == presetName {
+			if err := m.manager.DeletePreset(context.Background(), p.ID); err != nil {
+				m.err = err.Error()
+				return *m, nil
+			}
+			break
+		}
+	}
+	m.presets = m.manager.ListPresets()
+	m.rules = m.manager.Rules()
+	m.refreshPresetTable()
+	m.refreshTable()
+	return *m, nil
+}
+
+func (m *ScopeModel) updatePresetAdd(v tea.KeyPressMsg) (ScopeModel, tea.Cmd) {
+	switch {
+	case key.Matches(v, key.NewBinding(key.WithKeys("esc"))):
+		m.addingPreset = false
+		m.presetInput.Blur()
+		return *m, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
+		name := strings.TrimSpace(m.presetInput.Value())
+		if name == "" {
+			m.err = "preset name is required"
+			return *m, nil
+		}
+		_, err := m.manager.CreatePreset(context.Background(), name)
+		if err != nil {
+			m.err = err.Error()
+		} else {
+			m.err = ""
+			m.presets = m.manager.ListPresets()
+			m.refreshPresetTable()
+		}
+		m.addingPreset = false
+		m.presetInput.Blur()
+		return *m, nil
+	}
+	var cmd tea.Cmd
+	m.presetInput, cmd = m.presetInput.Update(v)
+	return *m, cmd
 }
 
 func (m *ScopeModel) updateAddFlow(v tea.KeyPressMsg) (ScopeModel, tea.Cmd) {
@@ -358,6 +525,43 @@ func (m *ScopeModel) updateAddFlow(v tea.KeyPressMsg) (ScopeModel, tea.Cmd) {
 	return *m, cmd
 }
 
+func (m *ScopeModel) refreshPresetTable() {
+	activeID := m.manager.ActivePresetID()
+	var rows []table.Row
+	// Global entry.
+	activeMark := " "
+	if activeID == "" {
+		activeMark = "●"
+	}
+	rows = append(rows, table.Row{activeMark, "Global", fmt.Sprintf("%d", m.countGlobalRules())})
+	for _, p := range m.presets {
+		activeMark = " "
+		if p.ID == activeID {
+			activeMark = "●"
+		}
+		// Count rules for this preset from manager's current rules.
+		count := 0
+		for _, r := range m.rules {
+			if r.PresetID == p.ID {
+				count++
+			}
+		}
+		rows = append(rows, table.Row{activeMark, p.Name, fmt.Sprintf("%d", count)})
+	}
+	m.presetTbl.SetRows(rows)
+	m.presetTbl.UpdateViewport()
+}
+
+func (m *ScopeModel) countGlobalRules() int {
+	count := 0
+	for _, r := range m.rules {
+		if r.PresetID == "" {
+			count++
+		}
+	}
+	return count
+}
+
 func (m *ScopeModel) refreshTable() {
 	rules := m.rules
 	if m.searching && m.search.Value() != "" {
@@ -400,13 +604,25 @@ func (m *ScopeModel) refreshTable() {
 }
 
 func (m ScopeModel) View() tea.View {
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
-		Width(m.width).Align(lipgloss.Center).
-		Render(" Ouroboros - Scope")
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
+		Width(m.width).Align(lipgloss.Center)
+	header := headerStyle.Render(" Ouroboros — Scope")
 
-	var prompt string
+	// Active preset name in header.
+	presetName := m.manager.ActivePresetName()
+	subHeader := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
+		Render(fmt.Sprintf("  Active preset: %s", presetName))
+
 	var body string
-	if m.adding {
+
+	if m.addingPreset {
+		body = lipgloss.JoinVertical(lipgloss.Left,
+			"New Preset — enter a name:",
+			"> "+m.presetInput.View(),
+			"enter: create  esc: cancel",
+		)
+	} else if m.adding {
+		var prompt string
 		switch m.addStep {
 		case 0:
 			prompt = "Step 1/4 — Action: type 'include' (i) or 'exclude' (e)"
@@ -429,12 +645,30 @@ func (m ScopeModel) View() tea.View {
 			"enter: done  esc: cancel",
 		)
 	} else {
-		body = m.table.View()
+		// Normal view: preset panel on top, rules below.
+		presetPanelLabel := "  SCOPE PRESETS"
+		rulePanelLabel := "  RULES"
+		if m.presetFocus {
+			presetPanelLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("▶ SCOPE PRESETS")
+		} else {
+			rulePanelLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("▶ RULES")
+		}
+		body = lipgloss.JoinVertical(lipgloss.Left,
+			presetPanelLabel,
+			m.presetTbl.View(),
+			"",
+			rulePanelLabel,
+			m.table.View(),
+		)
 	}
 
 	var help string
-	if !m.adding && !m.searching {
-		help = "a:add  d:del  space:toggle  /:search  i:import  I:import all  q:back"
+	if !m.adding && !m.searching && !m.addingPreset {
+		if m.presetFocus {
+			help = "tab: rules  n: new preset  enter: activate  d: delete  q: back"
+		} else {
+			help = "tab: presets  a: add rule  d: del  space: toggle  /: search  i: import  I: import all  q: back"
+		}
 	}
 
 	var errLine string
@@ -442,7 +676,7 @@ func (m ScopeModel) View() tea.View {
 		errLine = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("⚠ " + m.err)
 	}
 
-	sections := []string{header, body}
+	sections := []string{header, subHeader, body}
 	if help != "" {
 		sections = append(sections, help)
 	}

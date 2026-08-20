@@ -37,6 +37,7 @@ var hopHeaders = []string{
 // InterceptResult is sent on the intercept channel to unblock a paused flow.
 type InterceptResult struct {
 	Action string // "forward" or "drop"
+	Edited *msg.EditedRequest
 }
 
 // Proxy is an HTTP intercepting forward proxy.
@@ -68,6 +69,15 @@ func New(s store.Store, p *tea.Program, sc scope.Service, is intercept.Service) 
 
 func (p *Proxy) SetCA(ca *CACert) {
 	p.ca = ca
+}
+
+func (p *Proxy) SetInterceptService(svc intercept.Service) {
+	p.interceptSvc = svc
+}
+
+func (p *Proxy) IsInterceptPending(id string) bool {
+	_, ok := p.interceptCh.Load(id)
+	return ok
 }
 
 // SetProgram sets the tea.Program for sending events to the TUI.
@@ -125,6 +135,8 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 		ch := make(chan InterceptResult, 1)
 		p.interceptCh.Store(flow.ID, ch)
+		// Capture edited request if user modified in TUI (detail/repeater).
+		var edited *msg.EditedRequest
 		select {
 		case result := <-ch:
 			p.interceptCh.Delete(flow.ID)
@@ -134,12 +146,32 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "intercepted and dropped", http.StatusForbidden)
 				return
 			}
+			edited = result.Edited
 		case <-time.After(5 * time.Minute):
 			p.interceptCh.Delete(flow.ID)
 			flow.State = model.FlowDropped
 			p.finalizeFlow(flow, nil)
 			http.Error(w, "intercept timeout", http.StatusGatewayTimeout)
 			return
+		}
+		// Apply edits to the flow/request if present.
+		if edited != nil {
+			if edited.Method != "" {
+				flow.Request.Method = edited.Method
+				r.Method = edited.Method
+			}
+			if edited.URL != "" {
+				flow.Request.URL = edited.URL
+				r.URL, _ = url.Parse(edited.URL)
+			}
+			if edited.Headers != nil {
+				flow.Request.Headers = edited.Headers
+				r.Header = http.Header(edited.Headers)
+			}
+			if edited.Body != nil {
+				flow.Request.Body = edited.Body
+				reqBody = edited.Body
+			}
 		}
 	}
 
@@ -287,7 +319,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) HandleInterceptCommand(cmd msg.ForwardInterceptedFlow) {
 	if v, ok := p.interceptCh.Load(cmd.FlowID); ok {
 		ch := v.(chan InterceptResult)
-		ch <- InterceptResult{Action: "forward"}
+		ch <- InterceptResult{Action: "forward", Edited: cmd.Edited}
 	}
 }
 

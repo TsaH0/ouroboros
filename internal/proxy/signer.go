@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,11 +20,18 @@ var certCache sync.Map
 
 // SignHost generates a TLS certificate for the given hostname signed by the CA.
 func SignHost(ca *CACert, hostname string) (*tls.Certificate, error) {
+	if ca == nil {
+		return nil, fmt.Errorf("CA not loaded — run --install-ca and install ca.pem in browser/OS")
+	}
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if host, _, err := net.SplitHostPort(hostname); err == nil {
 		hostname = host
 	}
+	if hostname == "" {
+		return nil, fmt.Errorf("empty hostname for cert generation")
+	}
 
-	// Check cache first.
+	// Check cache first (lower-cased).
 	if cached, ok := certCache.Load(hostname); ok {
 		return cached.(*tls.Certificate), nil
 	}

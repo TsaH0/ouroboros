@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/llm"
 	"ouroboros/internal/model"
 	"ouroboros/internal/recon"
 	"ouroboros/internal/scope"
@@ -28,16 +26,14 @@ const (
 	reconTabEndpoints
 	reconTabTech
 	reconTabVulns
-	reconTabAI
 )
 
-var reconTabNames = []string{"Summary", "Hosts", "Endpoints", "Tech", "Vulns", "AI"}
+var reconTabNames = []string{"Summary", "Hosts", "Endpoints", "Tech", "Vulns"}
 
 // reconKeyMsg keys for ReconModel.
 type reconKeyMap struct {
 	run     key.Binding
 	back    key.Binding
-	analyze key.Binding
 	nextTab key.Binding
 	prevTab key.Binding
 }
@@ -52,28 +48,14 @@ type reconResultMsg struct {
 	err     error
 }
 
-// reconAIAnalyzeMsg triggers AI analysis of the recon summary.
-type reconAIAnalyzeMsg struct {
-	summary *recon.ReconSummary
-}
-
-// reconAIResultMsg carries the AI analysis result back.
-type reconAIResultMsg struct {
-	result *llm.ReconAnalysisResult
-	err    error
-}
-
 // ReconModel is the TUI model for the Recon Intelligence Workspace.
 type ReconModel struct {
 	engine    *recon.Engine
-	analyzer  *llm.Analyzer
 	scopeSvc  scope.Service
 	target    textinput.Model
 	summary   *recon.ReconSummary
-	aiResult  *llm.ReconAnalysisResult
 	progress  *recon.ProgressUpdate
 	loading   bool
-	aiLoading bool
 	tab       reconTab
 	spinner   spinner.Model
 	viewport  viewport.Model
@@ -85,7 +67,7 @@ type ReconModel struct {
 }
 
 // NewReconModel creates a new ReconModel.
-func NewReconModel(engine *recon.Engine, analyzer *llm.Analyzer, sc scope.Service, width, height int) ReconModel {
+func NewReconModel(engine *recon.Engine, sc scope.Service, width, height int) ReconModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
@@ -99,7 +81,6 @@ func NewReconModel(engine *recon.Engine, analyzer *llm.Analyzer, sc scope.Servic
 
 	return ReconModel{
 		engine:   engine,
-		analyzer: analyzer,
 		scopeSvc: sc,
 		target:   ti,
 		spinner:  sp,
@@ -110,7 +91,6 @@ func NewReconModel(engine *recon.Engine, analyzer *llm.Analyzer, sc scope.Servic
 		keymap: reconKeyMap{
 			run:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "run recon")),
 			back:    key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "back")),
-			analyze: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "AI analyze")),
 			nextTab: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
 			prevTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("S-tab", "prev tab")),
 		},
@@ -135,39 +115,27 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		// If loading, only allow quit.
-		if m.loading || m.aiLoading {
+		if m.loading {
 			if key.Matches(v, m.keymap.back) {
 				return m, func() tea.Msg { return backToListMsg{} }
 			}
 			return m, nil
 		}
 
-		// If we have results, tab navigation and AI analysis are active.
+		// If we have results, tab navigation is active.
 		if m.summary != nil {
 			switch {
 			case key.Matches(v, m.keymap.back):
 				return m, func() tea.Msg { return backToListMsg{} }
-			case key.Matches(v, m.keymap.analyze):
-				m.aiLoading = true
-				return m, tea.Batch(
-					m.spinner.Tick,
-					func() tea.Msg { return reconAIAnalyzeMsg{summary: m.summary} },
-				)
 			case key.Matches(v, m.keymap.nextTab):
-				m.tab = (m.tab + 1) % reconTabAI
-				if m.tab == reconTabAI && m.aiResult == nil {
-					m.tab = reconTabSummary
-				}
+				m.tab = (m.tab + 1) % 5
 				m.refreshViewport()
 				return m, nil
 			case key.Matches(v, m.keymap.prevTab):
 				if m.tab == 0 {
-					m.tab = reconTabAI - 1
+					m.tab = 4
 				} else {
 					m.tab--
-				}
-				if m.tab == reconTabAI && m.aiResult == nil {
-					m.tab = reconTabSummary
 				}
 				m.refreshViewport()
 				return m, nil
@@ -240,17 +208,6 @@ func (m ReconModel) Update(mgs tea.Msg) (ReconModel, tea.Cmd) {
 	case recon.ProgressUpdate:
 		m.progress = &v
 		return m, nil
-
-	case reconAIResultMsg:
-		m.aiLoading = false
-		if v.err != nil {
-			m.viewport.SetContent(fmt.Sprintf("AI analysis failed: %v\n\nPress q to go back.", v.err))
-		} else {
-			m.aiResult = v.result
-			m.tab = reconTabAI
-			m.refreshViewport()
-		}
-		return m, nil
 	}
 
 	// Spinner and viewport updates.
@@ -299,8 +256,6 @@ func (m ReconModel) View() tea.View {
 		body = m.spinner.View() + " " + progTxt
 	case m.scopeBlocked:
 		body = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render("OUT OF SCOPE — press Y to run anyway, N to cancel")
-	case m.summary != nil:
-		body = m.spinner.View() + " AI analyzing..."
 	case m.summary == nil:
 		input := lipgloss.NewStyle().Margin(1, 0).Render("Target: " + m.target.View())
 		body = lipgloss.JoinVertical(lipgloss.Left, input, "\nenter: run recon  q: back")
@@ -309,7 +264,7 @@ func (m ReconModel) View() tea.View {
 	}
 
 	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
-		"enter: run  tab/shift+tab: tabs  a: AI analyze  q: back")
+		"enter: run  tab/shift+tab: tabs  q: back  (AI via skills/ouroboros-advisor)")
 
 	sections := []string{header}
 	if tabBar != "" {
@@ -335,8 +290,6 @@ func (m ReconModel) renderTab() string {
 		return renderReconTech(m.summary)
 	case reconTabVulns:
 		return renderReconVulns(m.summary)
-	case reconTabAI:
-		return renderReconAI(m.aiResult)
 	}
 	return ""
 }
@@ -474,74 +427,4 @@ func renderReconVulns(s *recon.ReconSummary) string {
 	return b.String()
 }
 
-func renderReconAI(result *llm.ReconAnalysisResult) string {
-	if result == nil {
-		return "No AI analysis yet. Press 'a' to analyze.\n"
-	}
-	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("AI Attack Surface Prioritization"))
-	b.WriteString("\n\n")
 
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Summary"))
-	b.WriteString("\n")
-	b.WriteString(result.Summary)
-	b.WriteString("\n\n")
-
-	if len(result.HighPriority) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).Render("High Priority"))
-		b.WriteString("\n")
-		for _, item := range result.HighPriority {
-			b.WriteString(fmt.Sprintf("  ! %s\n", item))
-		}
-		b.WriteString("\n")
-	}
-
-	if len(result.InterestingHosts) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Interesting Hosts"))
-		b.WriteString("\n")
-		for _, h := range result.InterestingHosts {
-			b.WriteString(fmt.Sprintf("  - %s\n", h))
-		}
-		b.WriteString("\n")
-	}
-
-	if len(result.InterestingEndpoints) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Interesting Endpoints"))
-		b.WriteString("\n")
-		for _, e := range result.InterestingEndpoints {
-			b.WriteString(fmt.Sprintf("  - %s\n", e))
-		}
-		b.WriteString("\n")
-	}
-
-	if len(result.RecommendedOrder) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Recommended Testing Order"))
-		b.WriteString("\n")
-		for i, step := range result.RecommendedOrder {
-			b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, step))
-		}
-		b.WriteString("\n")
-	}
-
-	if len(result.InterestingPatterns) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Interesting Patterns"))
-		b.WriteString("\n")
-		for _, p := range result.InterestingPatterns {
-			b.WriteString(fmt.Sprintf("  - %s\n", p))
-		}
-		b.WriteString("\n")
-	}
-
-	if len(result.Reasoning) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Reasoning"))
-		b.WriteString("\n")
-		for _, r := range result.Reasoning {
-			b.WriteString(fmt.Sprintf("  - %s\n", r))
-		}
-	}
-
-	return b.String()
-}
-
-// Suppress unused import warnings — context is used by app.go recon handlers.
-var _ = context.Background

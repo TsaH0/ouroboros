@@ -53,6 +53,7 @@ type migration struct {
 
 var migrations = []migration{
 	{Version: 1, Up: schemaV1},
+	{Version: 2, Up: schemaV2},
 }
 
 const schemaV1 = `
@@ -143,6 +144,19 @@ CREATE TABLE IF NOT EXISTS scope_rules (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+`
+
+const schemaV2 = `
+ALTER TABLE scope_rules ADD COLUMN preset_id TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS scope_presets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scope_presets_name ON scope_presets(name);
+CREATE INDEX IF NOT EXISTS idx_scope_rules_preset ON scope_rules(preset_id);
 `
 
 func (s *SQLiteStore) migrate() error {
@@ -237,6 +251,21 @@ func (s *SQLiteStore) GetFlow(_ context.Context, id string) (*model.Flow, error)
 	return f, nil
 }
 
+func (s *SQLiteStore) DeleteFlow(_ context.Context, id string) error {
+	_, err := s.db.Exec(`DELETE FROM flows WHERE id = ?`, id)
+	return err
+}
+
+func (s *SQLiteStore) ClearFlows(_ context.Context) error {
+	_, err := s.db.Exec(`DELETE FROM flows`)
+	if err != nil {
+		return err
+	}
+	// Also clean dependent analyses to avoid orphans.
+	_, _ = s.db.Exec(`DELETE FROM analyses`)
+	return nil
+}
+
 func (s *SQLiteStore) ListFlows(_ context.Context) ([]*model.Flow, error) {
 	rows, err := s.db.Query(`SELECT
 		id, start_time, duration_ns, client_addr, server_addr,
@@ -264,7 +293,7 @@ func (s *SQLiteStore) ListFlows(_ context.Context) ([]*model.Flow, error) {
 // --- Scope rules ---
 
 func (s *SQLiteStore) LoadScopeRules(_ context.Context) ([]scope.Rule, error) {
-	rows, err := s.db.Query(`SELECT id, kind, pattern, match_mode, action, enabled, priority, note, created_at, updated_at FROM scope_rules ORDER BY priority DESC, created_at`)
+	rows, err := s.db.Query(`SELECT id, preset_id, kind, pattern, match_mode, action, enabled, priority, note, created_at, updated_at FROM scope_rules ORDER BY priority DESC, created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +304,7 @@ func (s *SQLiteStore) LoadScopeRules(_ context.Context) ([]scope.Rule, error) {
 		var r scope.Rule
 		var enabled int
 		var createdStr, updatedStr string
-		if err := rows.Scan(&r.ID, &r.Kind, &r.Pattern, &r.MatchMode, &r.Action, &enabled, &r.Priority, &r.Note, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&r.ID, &r.PresetID, &r.Kind, &r.Pattern, &r.MatchMode, &r.Action, &enabled, &r.Priority, &r.Note, &createdStr, &updatedStr); err != nil {
 			return nil, err
 		}
 		r.Enabled = enabled != 0
@@ -287,8 +316,8 @@ func (s *SQLiteStore) LoadScopeRules(_ context.Context) ([]scope.Rule, error) {
 }
 
 func (s *SQLiteStore) SaveScopeRule(_ context.Context, rule *scope.Rule) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO scope_rules (id, kind, pattern, match_mode, action, enabled, priority, note, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		rule.ID, rule.Kind, rule.Pattern, rule.MatchMode, rule.Action, boolToInt(rule.Enabled), rule.Priority, rule.Note,
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO scope_rules (id, preset_id, kind, pattern, match_mode, action, enabled, priority, note, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		rule.ID, rule.PresetID, rule.Kind, rule.Pattern, rule.MatchMode, rule.Action, boolToInt(rule.Enabled), rule.Priority, rule.Note,
 		rule.CreatedAt.UTC().Format(time.RFC3339Nano),
 		rule.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
@@ -298,6 +327,69 @@ func (s *SQLiteStore) SaveScopeRule(_ context.Context, rule *scope.Rule) error {
 func (s *SQLiteStore) DeleteScopeRule(_ context.Context, id string) error {
 	_, err := s.db.Exec(`DELETE FROM scope_rules WHERE id = ?`, id)
 	return err
+}
+
+// --- Scope presets ---
+
+func (s *SQLiteStore) ListScopePresets(_ context.Context) ([]scope.Preset, error) {
+	rows, err := s.db.Query(`SELECT id, name, created_at, updated_at FROM scope_presets ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var presets []scope.Preset
+	for rows.Next() {
+		var p scope.Preset
+		var createdStr, updatedStr string
+		if err := rows.Scan(&p.ID, &p.Name, &createdStr, &updatedStr); err != nil {
+			return nil, err
+		}
+		p.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
+		p.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		presets = append(presets, p)
+	}
+	return presets, rows.Err()
+}
+
+func (s *SQLiteStore) SaveScopePreset(_ context.Context, p *scope.Preset) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO scope_presets (id, name, created_at, updated_at) VALUES (?,?,?,?)`,
+		p.ID, p.Name,
+		p.CreatedAt.UTC().Format(time.RFC3339Nano),
+		p.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLiteStore) DeleteScopePreset(_ context.Context, id string) error {
+	_, err := s.db.Exec(`DELETE FROM scope_presets WHERE id = ?`, id)
+	return err
+}
+
+func (s *SQLiteStore) LoadScopeRulesForPreset(_ context.Context, presetID string) ([]scope.Rule, error) {
+	rows, err := s.db.Query(
+		`SELECT id, preset_id, kind, pattern, match_mode, action, enabled, priority, note, created_at, updated_at
+		 FROM scope_rules WHERE preset_id = ? ORDER BY priority DESC, created_at`,
+		presetID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var rules []scope.Rule
+	for rows.Next() {
+		var r scope.Rule
+		var enabled int
+		var createdStr, updatedStr string
+		if err := rows.Scan(&r.ID, &r.PresetID, &r.Kind, &r.Pattern, &r.MatchMode, &r.Action, &enabled, &r.Priority, &r.Note, &createdStr, &updatedStr); err != nil {
+			return nil, err
+		}
+		r.Enabled = enabled != 0
+		r.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
+		r.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
 }
 
 // --- Recon ---

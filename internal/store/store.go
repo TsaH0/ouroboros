@@ -15,11 +15,19 @@ type Store interface {
 	SaveFlow(ctx context.Context, f *model.Flow) error
 	GetFlow(ctx context.Context, id string) (*model.Flow, error)
 	ListFlows(ctx context.Context) ([]*model.Flow, error)
+	DeleteFlow(ctx context.Context, id string) error
+	ClearFlows(ctx context.Context) error
 
 	// --- Scope rules ---
 	LoadScopeRules(ctx context.Context) ([]scope.Rule, error)
 	SaveScopeRule(ctx context.Context, rule *scope.Rule) error
 	DeleteScopeRule(ctx context.Context, id string) error
+
+	// --- Scope presets (named Caido-style presets) ---
+	ListScopePresets(ctx context.Context) ([]scope.Preset, error)
+	SaveScopePreset(ctx context.Context, p *scope.Preset) error
+	DeleteScopePreset(ctx context.Context, id string) error
+	LoadScopeRulesForPreset(ctx context.Context, presetID string) ([]scope.Rule, error)
 
 	// --- Recon ---
 	SaveRecon(ctx context.Context, s *recon.ReconSummary) error

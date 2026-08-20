@@ -310,8 +310,25 @@ func (m *Manager) Update(msg tea.Msg) tea.Cmd {
 		m.height = v.Height
 		m.Resize(m.width, m.height)
 		return nil
+	case tea.MouseMsg:
+		// Mouse wheels / clicks go only to the pane under cursor,
+		// falling back to the focused pane. Broadcasting to all panes
+		// makes scrolling the right pane also scroll the left.
+		mPos := v.Mouse()
+		if target := m.paneAt(mPos.X, mPos.Y); target != nil {
+			updated, cmd := target.View.Update(msg)
+			target.View = updated
+			return cmd
+		}
+		focused := m.FocusedPane()
+		if focused != nil {
+			updated, cmd := focused.View.Update(msg)
+			focused.View = updated
+			return cmd
+		}
+		return nil
 	default:
-		// Dispatch to all panes.
+		// Dispatch to all panes (flows, preset changes, ticks, etc.).
 		return m.dispatchToAll(msg)
 	}
 }
@@ -421,7 +438,7 @@ func (m *Manager) View() string {
 	if focused != nil {
 		helpText = focused.View.HelpText()
 	}
-	workspaceKeys := "^h/j/k/l: focus  ^w: split  0: hist  4: scope  5: recon  ::: cmd"
+	workspaceKeys := "^h/j/k/l:focus ^w:split 0:hist 3:intercept 4:scope 5:recon N:newProj P:switchProj I:intercept :::cmd"
 	if helpText != "" {
 		helpText += "  "
 	}
@@ -470,4 +487,16 @@ func (m *Manager) focusPane(id string) {
 // FocusPane sets focus to the pane with the given ID (public).
 func (m *Manager) FocusPane(id string) {
 	m.focusPane(id)
+}
+
+// paneAt returns the pane containing terminal coordinates (x,y), or nil.
+// Coordinates are 0-indexed. The layout occupies y < height-2 (above help/status).
+func (m *Manager) paneAt(x, y int) *Pane {
+	if m.layout == nil || m.width == 0 || m.height == 0 {
+		return nil
+	}
+	if y >= m.height-2 || x < 0 || x >= m.width || y < 0 {
+		return nil // over help/status bar or out of bounds
+	}
+	return m.layout.paneAt(x, y, 0, 0, m.width, m.height-2)
 }

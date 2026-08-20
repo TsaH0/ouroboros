@@ -137,20 +137,22 @@ func (l *Layout) Render() string {
 	case LayoutHSplit:
 		left := l.Left.Render()
 		right := l.Right.Render()
-		return joinHorizontal(left, right)
+		// Use lipgloss for ANSI-safe horizontal join; keeps each pane
+		// isolated so scrolling one never bleeds into the other.
+		return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	case LayoutVSplit:
 		top := l.Left.Render()
 		bottom := l.Right.Render()
-		return top + "\n" + bottom
+		return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 	case LayoutGrid:
 		topLeft := l.Left.Render()
 		topRight := l.Right.Render()
-		return joinHorizontal(topLeft, topRight)
+		return lipgloss.JoinHorizontal(lipgloss.Top, topLeft, topRight)
 	}
 	return ""
 }
 
-// joinHorizontal joins two rendered panes side by side.
+// joinHorizontal joins two rendered panes side by side (legacy fallback).
 func joinHorizontal(left, right string) string {
 	leftLines := splitLines(left)
 	rightLines := splitLines(right)
@@ -160,7 +162,6 @@ func joinHorizontal(left, right string) string {
 		maxLines = len(rightLines)
 	}
 
-	// Pad both to same height.
 	for len(leftLines) < maxLines {
 		leftLines = append(leftLines, "")
 	}
@@ -168,7 +169,6 @@ func joinHorizontal(left, right string) string {
 		rightLines = append(rightLines, "")
 	}
 
-	// Find max visual width of left side (ANSI-aware).
 	leftWidth := 0
 	for _, line := range leftLines {
 		if w := lipgloss.Width(line); w > leftWidth {
@@ -180,7 +180,6 @@ func joinHorizontal(left, right string) string {
 	for i := 0; i < maxLines; i++ {
 		l := leftLines[i]
 		r := rightLines[i]
-		// Pad left line to leftWidth (visual width).
 		if pad := leftWidth - lipgloss.Width(l); pad > 0 {
 			l += strings.Repeat(" ", pad)
 		}
@@ -194,4 +193,38 @@ func splitLines(s string) []string {
 		return nil
 	}
 	return strings.Split(s, "\n")
+}
+
+// paneAt returns the leaf pane containing (x,y) within the given bounds.
+func (l *Layout) paneAt(x, y, ox, oy, w, h int) *Pane {
+	switch l.Kind {
+	case LayoutLeaf:
+		if l.Pane != nil && x >= ox && x < ox+w && y >= oy && y < oy+h {
+			return l.Pane
+		}
+		return nil
+	case LayoutHSplit:
+		leftW := int(float64(w) * l.Weight)
+		rightW := w - leftW
+		if l.Left != nil {
+			if p := l.Left.paneAt(x, y, ox, oy, leftW, h); p != nil {
+				return p
+			}
+		}
+		if l.Right != nil {
+			return l.Right.paneAt(x, y, ox+leftW, oy, rightW, h)
+		}
+	case LayoutVSplit:
+		topH := int(float64(h) * l.Weight)
+		bottomH := h - topH
+		if l.Left != nil {
+			if p := l.Left.paneAt(x, y, ox, oy, w, topH); p != nil {
+				return p
+			}
+		}
+		if l.Right != nil {
+			return l.Right.paneAt(x, y, ox, oy+topH, w, bottomH)
+		}
+	}
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"ouroboros/internal/model"
@@ -56,22 +57,64 @@ func (p *Proxy) mitmConnect(w http.ResponseWriter, r *http.Request, flow *model.
 	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 
 	// TLS config with dynamic cert generation.
+	// - MinVersion TLS12: Go defaults include 1.2+ ; explicit for clarity.
+	// - NextProtos advertises h2 + http/1.1 so browsers negotiating h2 don't
+	//   abort. We still speak http/1.1 on the wire (see resp.Proto rewrite).
+	// - GetCertificate normalizes SNI/host (strip port, lower-case) and
+	//   surfaces cert-gen errors with host context.
 	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			sni := hello.ServerName
 			if sni == "" {
 				sni = host
 			}
-			return SignHost(p.ca, sni)
+			if h, _, err := net.SplitHostPort(sni); err == nil {
+				sni = h
+			}
+			sni = strings.ToLower(strings.TrimSpace(sni))
+			cert, err := SignHost(p.ca, sni)
+			if err != nil {
+				return nil, err
+			}
+			return cert, nil
 		},
 		NextProtos: []string{"http/1.1"},
 	}
 
 	tlsConn := tls.Server(bufConn, tlsConfig)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		flow.Error = "TLS handshake failed: " + err.Error()
+		errStr := err.Error()
+		lower := strings.ToLower(errStr)
+		// Classify: browser fault vs proxy fault.
+		// Browser: CA not trusted / pinning / HSTS / client abort.
+		isBrowserFault := strings.Contains(lower, "unknown authority") ||
+			strings.Contains(lower, "bad certificate") ||
+			strings.Contains(lower, "certificate signed by unknown") ||
+			strings.Contains(lower, "unknown ca") ||
+			strings.Contains(lower, "alert") ||
+			strings.Contains(lower, "eof") ||
+			strings.Contains(lower, "connection reset") ||
+			strings.Contains(lower, "broken pipe") ||
+			strings.Contains(lower, "no such host")
+		isTimeout := strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline")
+		hint := "hint: install CA: go run ./cmd/ouroboros --install-ca | sudo tee /usr/local/share/ca-certificates/ouroboros.crt && sudo update-ca-certificates (or import ca.pem in browser); then restart browser"
+		fault := "browser"
+		if !isBrowserFault && !isTimeout && p.ca == nil {
+			fault = "proxy (CA not loaded)"
+			hint = "proxy fault: CA failed to load — check ~/.config/ouroboros/ca.pem"
+		} else if !isBrowserFault && strings.Contains(lower, "cert") {
+			fault = "proxy (cert gen)"
+		}
+		if isTimeout {
+			fault = "browser/timeout"
+		}
+		// Keep flow.Error short for TUI table; full hint visible in detail pane.
+		// Do NOT log to stdout/stderr — it corrupts the Bubble Tea AltScreen.
+		// The failure is already persisted via finalizeFlow and visible as a failed flow.
+		flow.Error = "TLS handshake failed for " + host + ": " + errStr + " [" + fault + " fault] — " + hint
 		flow.State = model.FlowFailed
 		p.finalizeFlow(flow, nil)
 		clientConn.Close()
@@ -116,6 +159,7 @@ func (p *Proxy) mitmConnect(w http.ResponseWriter, r *http.Request, flow *model.
 		p.sendEvent(msg.FlowStarted{Flow: subFlow})
 
 		// Check intercept.
+		var edited *msg.EditedRequest
 		if p.interceptSvc != nil && p.interceptSvc.Evaluate(subFlow) {
 			subFlow.State = model.FlowIntercepted
 			_ = p.store.SaveFlow(context.Background(), subFlow)
@@ -131,20 +175,52 @@ func (p *Proxy) mitmConnect(w http.ResponseWriter, r *http.Request, flow *model.
 					p.finalizeFlow(subFlow, nil)
 					continue
 				}
+				edited = result.Edited
 			case <-time.After(5 * time.Minute):
 				p.interceptCh.Delete(subFlow.ID)
 				subFlow.State = model.FlowDropped
 				p.finalizeFlow(subFlow, nil)
 				continue
 			}
+			// Apply edits if user modified in TUI.
+			if edited != nil {
+				if edited.Method != "" {
+					req.Method = edited.Method
+					subFlow.Request.Method = edited.Method
+				}
+				if edited.URL != "" {
+					subFlow.Request.URL = edited.URL
+					if u, err := url.Parse(edited.URL); err == nil {
+						req.URL = u
+					}
+				}
+				if edited.Headers != nil {
+					req.Header = http.Header(edited.Headers)
+					subFlow.Request.Headers = edited.Headers
+				}
+				if edited.Body != nil {
+					reqBody = edited.Body
+					subFlow.Request.Body = edited.Body
+				}
+			}
 		}
 
-		// Build upstream URL.
+		// Build upstream URL (use edited URL/path if present).
 		targetURL := &url.URL{
 			Scheme:   "https",
 			Host:     host,
 			Path:     req.URL.Path,
 			RawQuery: req.URL.RawQuery,
+		}
+		if edited != nil && edited.URL != "" {
+			if u, err := url.Parse(edited.URL); err == nil {
+				targetURL.Path = u.Path
+				targetURL.RawQuery = u.RawQuery
+				if u.Host != "" {
+					targetURL.Host = u.Host
+					host = u.Host
+				}
+			}
 		}
 
 		// Forward upstream.

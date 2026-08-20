@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -14,7 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/llm"
+	"ouroboros/internal/intercept"
 	"ouroboros/internal/model"
 	"ouroboros/internal/msg"
 	"ouroboros/internal/project"
@@ -31,7 +32,6 @@ type AppModel struct {
 	store                  store.Store
 	proxy                  *proxy.Proxy
 	repeaterSvc            repeater.Service
-	llmAnalyzer            *llm.Analyzer
 	reconMgr               *recon.Engine
 	reconProgressListening bool
 	scopeMgr               *scope.Manager
@@ -39,8 +39,7 @@ type AppModel struct {
 	history                *HistoryModel
 	help                   help.Model
 	quitting               bool
-	llmContext             []llm.Message
-	lastBulkResult         *llm.BulkAnalysisResult
+	interceptEnabled       bool
 	width                  int
 	height                 int
 	ready                  bool
@@ -49,11 +48,17 @@ type AppModel struct {
 	commandInput           textinput.Model
 	projectStore           *project.Store
 	activeProject          string
-}
-
-// SetAnalyzer sets the LLM analyzer (called from main after provider config).
-func (m *AppModel) SetAnalyzer(a *llm.Analyzer) {
-	m.llmAnalyzer = a
+	// Project picker overlay (N: new, P: switch).
+	projectPicker    bool
+	projectList      []string
+	projectCursor    int
+	creatingProject  bool
+	newProjectInput  textinput.Model
+	// Confirm wipe (D: delete persisted history).
+	confirmWipe bool
+	// Intercept queue tab (3) and floating editor.
+	interceptModel *InterceptModel
+	floating       workspace.View
 }
 
 // SetReconEngine sets the recon engine (called from main).
@@ -96,6 +101,24 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// Confirm wipe overlay takes priority.
+		if m.confirmWipe {
+			return m.handleConfirmWipeKey(v)
+		}
+
+		// Floating editor (detail/repeater for intercept) takes priority over panes.
+		if m.floating != nil {
+			return m.handleFloatingKey(v)
+		}
+
+		// Project picker / new-project overlays take priority.
+		if m.projectPicker {
+			return m.handleProjectPickerKey(v)
+		}
+		if m.creatingProject {
+			return m.handleNewProjectKey(v)
+		}
+
 		// Command mode: route all keys to the command input.
 		if m.commandMode {
 			return m.handleCommandKey(v)
@@ -121,6 +144,9 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		if handled, cmd := m.handleHistoryKey(v); handled {
 			return m, cmd
 		}
+		if handled, cmd := m.handleInterceptKey(v); handled {
+			return m, cmd
+		}
 		// Delegate all other keys to the workspace manager.
 		if m.ws != nil {
 			cmd := m.ws.Update(v)
@@ -133,6 +159,10 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case backToListMsg:
+		if m.floating != nil {
+			m.closeFloating()
+			return m, nil
+		}
 		if m.ws != nil {
 			m.ws.CloseFocused()
 			if m.ws.Layout() == nil {
@@ -152,17 +182,100 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case msg.ScopePresetChangedMsg:
+		// Broadcast preset change to all history panes so they re-filter.
+		if m.ws != nil {
+			return m, m.ws.Update(v)
+		}
+		return m, nil
+
 	case msg.InterceptionRequired:
 		flow, err := m.store.GetFlow(context.Background(), v.FlowID)
 		if err != nil || flow == nil {
 			return m, nil
 		}
-		// Open detail view in a new pane.
-		detail := NewDetailModel(flow, m.width, m.height)
-		pane := m.ws.SplitHSplit(&detailView{
-			DetailModel: &detail,
-			id:          m.nextViewID("detail"),
-		})
+		// Queue into intercept tab instead of auto-piling panes.
+		m.ensureInterceptModel()
+		m.interceptModel.AddFlow(flow)
+		// Ensure intercept pane exists (auto-open on first intercept).
+		hasInterceptPane := false
+		if m.ws != nil {
+			for _, p := range m.ws.Layout().Panes() {
+				if _, ok := p.View.(*InterceptModel); ok {
+					hasInterceptPane = true
+					break
+				}
+			}
+			if !hasInterceptPane {
+				// Open intercept queue as a new pane (non-intrusive).
+				pane := m.ws.SplitHSplit(m.interceptModel)
+				return m, pane.View.Init()
+			}
+		}
+		// Also broadcast to intercept pane if already open.
+		if m.ws != nil {
+			return m, m.ws.Update(v)
+		}
+		return m, nil
+
+	case msg.ForwardInterceptedFlow:
+		if m.proxy != nil {
+			m.proxy.HandleInterceptCommand(v)
+		}
+		if m.interceptModel != nil {
+			m.interceptModel.RemoveFlow(v.FlowID)
+		}
+		if m.floating != nil {
+			// If floating detail was for this flow, close it.
+			if dv, ok := m.floating.(*detailView); ok && dv.flow != nil && dv.flow.ID == v.FlowID {
+				m.closeFloating()
+			} else if v.FlowID == "" {
+				m.closeFloating()
+			}
+		}
+		// Also close detail pane if it was a split pane for this flow.
+		if m.ws != nil {
+			for _, p := range m.ws.Layout().Panes() {
+				if dv, ok := p.View.(*detailView); ok && dv.flow != nil && dv.flow.ID == v.FlowID {
+					m.ws.CloseFocused()
+					break
+				}
+			}
+		}
+		return m, nil
+
+	case msg.DropInterceptedFlow:
+		if m.proxy != nil {
+			m.proxy.HandleInterceptCommandDrop(v)
+		}
+		if m.interceptModel != nil {
+			m.interceptModel.RemoveFlow(v.FlowID)
+		}
+		if m.floating != nil {
+			if dv, ok := m.floating.(*detailView); ok && dv.flow != nil && dv.flow.ID == v.FlowID {
+				m.closeFloating()
+			} else if v.FlowID == "" {
+				m.closeFloating()
+			}
+		}
+		if m.ws != nil {
+			for _, p := range m.ws.Layout().Panes() {
+				if dv, ok := p.View.(*detailView); ok && dv.flow != nil && dv.flow.ID == v.FlowID {
+					m.ws.CloseFocused()
+					break
+				}
+			}
+		}
+		return m, nil
+
+	case detailOpenRepeaterMsg:
+		repeater := NewRepeaterModel(v.flow, m.width, m.height)
+		rv := &repeaterView{RepeaterModel: &repeater, id: m.nextViewID("repeater")}
+		if m.floating != nil {
+			// Detail was floating (intercept queue) — replace with repeater floating
+			return m, m.openFloating(rv)
+		}
+		pane := m.ws.SplitHSplit(rv)
 		return m, pane.View.Init()
 
 	case recon.ProgressUpdate:
@@ -172,12 +285,6 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case reconResultMsg:
-		if m.ws != nil {
-			return m, m.ws.Update(v)
-		}
-		return m, nil
-
-	case reconAIResultMsg:
 		if m.ws != nil {
 			return m, m.ws.Update(v)
 		}
@@ -199,19 +306,6 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, run
 
-	case reconAIAnalyzeMsg:
-		return m, func() tea.Msg {
-			if m.llmAnalyzer == nil {
-				return reconAIResultMsg{err: fmt.Errorf("no LLM configured")}
-			}
-			summary := v.summary
-			if m.scopeMgr != nil {
-				summary = filterReconInScope(summary, m.scopeMgr)
-			}
-			result, err := m.llmAnalyzer.AnalyzeRecon(context.Background(), summary)
-			return reconAIResultMsg{result: result, err: err}
-		}
-
 	case repeaterResultMsg:
 		if m.ws != nil {
 			return m, m.ws.Update(v)
@@ -224,51 +318,25 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case llmResultMsg:
-		if m.ws != nil {
-			return m, m.ws.Update(v)
-		}
-		return m, nil
-
-	case llmAnalyzeMsg:
-		if v.bulkKind == LLMViewBulk {
-			return m, func() tea.Msg {
-				if m.llmAnalyzer == nil {
-					return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, GEMINI_API_KEY, or run Ollama)")}
-				}
-				flows, _ := m.store.ListFlows(context.Background())
-				if m.scopeMgr != nil {
-					var inScope []*model.Flow
-					for _, f := range flows {
-						if f.ScopeStatus == model.ScopeInScope {
-							inScope = append(inScope, f)
-						}
-					}
-					flows = inScope
-				}
-				result, err := m.llmAnalyzer.AnalyzeBulk(context.Background(), flows)
-				if err == nil {
-					m.lastBulkResult = result
-					m.llmContext = buildBulkContext(result)
-				}
-				return llmResultMsg{bulkResult: result, err: err}
-			}
-		}
-		return m, func() tea.Msg {
-			if m.llmAnalyzer == nil {
-				return llmResultMsg{err: fmt.Errorf("no LLM configured (set OPENAI_API_KEY, NVIDIA_API_KEY, GEMINI_API_KEY, or run Ollama)")}
-			}
-			result, err := m.llmAnalyzer.AnalyzeFlow(context.Background(), v.flow, m.llmContext)
-			if err == nil && result != nil {
-				m.llmContext = append(m.llmContext,
-					llm.Message{Role: llm.RoleUser, Content: "Analyzed flow " + v.flow.ID},
-					llm.Message{Role: llm.RoleAssistant, Content: result.Summary},
-				)
-			}
-			return llmResultMsg{result: result, err: err}
-		}
-
 	case repeaterSendMsg:
+		// If this flow is currently intercepted and paused, forward the edited
+		// request through the intercept channel instead of a separate replay.
+		if m.proxy != nil && m.proxy.IsInterceptPending(v.flow.ID) {
+			m.proxy.HandleInterceptCommand(msg.ForwardInterceptedFlow{
+				FlowID: v.flow.ID,
+				Edited: &msg.EditedRequest{
+					Method:  v.edits.Method,
+					URL:     v.edits.URL,
+					Headers: v.edits.Headers,
+					Body:    v.edits.Body,
+				},
+			})
+			// Close the repeater pane that was editing the intercepted flow.
+			if m.ws != nil {
+				m.ws.CloseFocused()
+			}
+			return m, nil
+		}
 		return m, func() tea.Msg {
 			resp, err := m.repeaterSvc.Replay(context.Background(), v.flow, v.edits)
 			if errors.Is(err, repeater.ErrOutOfScope) {
@@ -286,7 +354,219 @@ func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleGlobalKey processes view-opening shortcuts (0/4/5) that work from
+func (m *AppModel) setInterceptEnabled(on bool) {
+	m.interceptEnabled = on
+	if m.proxy == nil {
+		return
+	}
+	if on {
+		m.proxy.SetInterceptService(intercept.NewMatcher([]intercept.Rule{
+			{Allow: true, Host: regexp.MustCompile(".*")},
+		}))
+	} else {
+		m.proxy.SetInterceptService(intercept.NewMatcher(nil))
+	}
+}
+
+func (m *AppModel) ensureInterceptModel() {
+	if m.interceptModel == nil {
+		m.interceptModel = NewInterceptModel(m.store, m.width, m.height)
+	}
+}
+
+func (m *AppModel) openInterceptPane() tea.Cmd {
+	m.ensureInterceptModel()
+	// Focus existing or create new.
+	if m.ws != nil {
+		for _, p := range m.ws.Layout().Panes() {
+			if _, ok := p.View.(*InterceptModel); ok {
+				m.ws.FocusPane(p.ID)
+				return nil
+			}
+		}
+		pane := m.ws.SplitHSplit(m.interceptModel)
+		return pane.View.Init()
+	}
+	return nil
+}
+
+func (m *AppModel) openFloating(v workspace.View) tea.Cmd {
+	m.floating = v
+	if v != nil {
+		v.Focus()
+		// Ensure floating gets current size (centered overlay will compute itself, but view needs size).
+		fw := int(float64(m.width) * 0.84)
+		fh := int(float64(m.height) * 0.86)
+		if fw < 40 {
+			fw = m.width - 4
+		}
+		if fh < 10 {
+			fh = m.height - 4
+		}
+		v.Resize(fw, fh)
+		return v.Init()
+	}
+	return nil
+}
+
+func (m *AppModel) closeFloating() {
+	if m.floating != nil {
+		m.floating.Blur()
+		m.floating = nil
+	}
+}
+
+func (m *AppModel) handleFloatingKey(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.floating == nil {
+		return m, nil
+	}
+	// esc/q closes floating without forwarding (flow stays paused until f/d).
+	if key.Matches(v, key.NewBinding(key.WithKeys("esc", "q"))) {
+		// If floating is an intercept detail, q should just close overlay, not drop.
+		// User can still f/d inside detail. So esc/q closes overlay only.
+		if _, ok := m.floating.(*detailView); ok {
+			// Check if user was editing — let detail handle esc first
+			updated, cmd := m.floating.Update(v)
+			if cmd != nil {
+				m.floating = updated
+				return m, cmd
+			}
+			// If detail didn't consume, close floating
+			m.closeFloating()
+			return m, nil
+		}
+		m.closeFloating()
+		return m, nil
+	}
+	updated, cmd := m.floating.Update(v)
+	m.floating = updated
+	// If the floating detail emitted a Forward/Drop message, it will be handled
+	// as a tea.Msg in the next Update cycle. For direct cmd returns (like backToListMsg
+	// from detail's q), we need to catch it: check if update produced a command that
+	// sends backToListMsg — simplest is to let next Update handle, but we also
+	// handle immediate close if floating requested back.
+	if cmd != nil {
+		// Peek: if the floating view wants to close (backToList), close overlay.
+		// We can't peek into cmd, so let it flow; but also handle esc above.
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m *AppModel) handleInterceptKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
+	if m.ws == nil {
+		return false, nil
+	}
+	focused := m.ws.FocusedPane()
+	if focused == nil {
+		return false, nil
+	}
+	im, ok := focused.View.(*InterceptModel)
+	if !ok {
+		return false, nil
+	}
+	if m.ws.WaitingForWindow() {
+		return false, nil
+	}
+	switch {
+	case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
+		flow := im.SelectedFlow()
+		if flow == nil {
+			return true, nil
+		}
+		// Open floating editable detail for the selected intercepted flow.
+		detail := NewDetailModel(flow, m.width, m.height)
+		return true, m.openFloating(&detailView{DetailModel: &detail, id: m.nextViewID("detail-float")})
+	case key.Matches(v, key.NewBinding(key.WithKeys("f"))):
+		flow := im.SelectedFlow()
+		if flow == nil {
+			return true, nil
+		}
+		// Forward directly from queue without opening editor.
+		if m.proxy != nil {
+			m.proxy.HandleInterceptCommand(msg.ForwardInterceptedFlow{FlowID: flow.ID})
+		}
+		im.RemoveFlow(flow.ID)
+		return true, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("d"))):
+		flow := im.SelectedFlow()
+		if flow == nil {
+			return true, nil
+		}
+		if m.proxy != nil {
+			m.proxy.HandleInterceptCommandDrop(msg.DropInterceptedFlow{FlowID: flow.ID})
+		}
+		im.RemoveFlow(flow.ID)
+		return true, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("C"))):
+		// Clear all: drop all pending.
+		for _, f := range im.flows {
+			if m.proxy != nil {
+				m.proxy.HandleInterceptCommandDrop(msg.DropInterceptedFlow{FlowID: f.ID})
+			}
+		}
+		im.ClearAll()
+		return true, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("q"))):
+		// q in intercept tab closes pane (not quit).
+		m.ws.CloseFocused()
+		return true, nil
+	}
+	return false, nil
+}
+
+func (m *AppModel) renderFloatingOverlay(base string) string {
+	if m.floating == nil {
+		return base
+	}
+	fw := int(float64(m.width) * 0.84)
+	fh := int(float64(m.height) * 0.86)
+	if fw < 40 {
+		fw = m.width - 4
+	}
+	if fh < 10 {
+		fh = m.height - 4
+	}
+	// Render floating content sized to fw/fh with a border and shadow.
+	content := m.floating.View()
+	// Clamp floating content to fw/fh
+	box := lipgloss.NewStyle().
+		Width(fw).
+		Height(fh).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(colAccent)).
+		Background(lipgloss.Color("236")).
+		Padding(1, 2).
+		Render(content)
+	// Center over base using Place
+	overlay := lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
+	// Dim background by overlaying — simple: just place foreground over background lines.
+	// We overlay by stacking: background + overlay with transparency via Place's whitespace.
+	// For terminal, we just return overlay centered; the base is underneath but Place already handles.
+	// Combine: place overlay on top of base content area.
+	bLines := strings.Split(base, "\n")
+	oLines := strings.Split(overlay, "\n")
+	// Overlay oLines onto bLines where oLines is not just spaces.
+	maxH := max(len(bLines), len(oLines))
+	var out []string
+	for i := 0; i < maxH; i++ {
+		var bl, ol string
+		if i < len(bLines) {
+			bl = bLines[i]
+		}
+		if i < len(oLines) {
+			ol = oLines[i]
+		}
+		if strings.TrimSpace(ol) == "" {
+			out = append(out, bl)
+		} else {
+			out = append(out, ol)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// handleGlobalKey processes view-opening shortcuts (0/3/4/5) that work from
 // any pane unless the focused pane is actively capturing text input.
 func (m *AppModel) handleGlobalKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 	if m.ws == nil {
@@ -309,6 +589,26 @@ func (m *AppModel) handleGlobalKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, m.openReconPane()
 	case key.Matches(v, key.NewBinding(key.WithKeys("i"))):
 		return m.importSelectedFlowAsScope()
+	case key.Matches(v, key.NewBinding(key.WithKeys("N"))):
+		// N: new project — prompt for name and save current scope rules.
+		m.ensureProjectStore()
+		m.creatingProject = true
+		m.newProjectInput = textinput.New()
+		m.newProjectInput.Prompt = ""
+		m.newProjectInput.Placeholder = "project name"
+		m.newProjectInput.Focus()
+		return true, textinput.Blink
+	case key.Matches(v, key.NewBinding(key.WithKeys("P"))):
+		// P: project switcher picker.
+		m.ensureProjectStore()
+		m.openProjectPicker()
+		return true, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("I"))):
+		// I: toggle intercept (pause matching flows for forward/drop/edit).
+		m.setInterceptEnabled(!m.interceptEnabled)
+		return true, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("3"))):
+		return true, m.openInterceptPane()
 	}
 	return false, nil
 }
@@ -478,6 +778,15 @@ func (m *AppModel) executeCommand(input string) (tea.Model, tea.Cmd) {
 		m.activeProject = strings.Join(names, ", ")
 		return m, nil
 
+	case "clear":
+		// :clear — clear screen only (DB kept, restart restores).
+		m.clearAllHistoryScreens()
+		return m, nil
+	case "clear!", "wipe", "purge":
+		// :clear! / :wipe / :purge — delete persisted flows (DB + screen).
+		m.confirmWipe = true
+		return m, nil
+
 	case "q":
 		m.quitting = true
 		return m, tea.Quit
@@ -509,22 +818,21 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		m.quitting = true
 		return true, tea.Quit
 	case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
+		// Floating detail (centered modal) instead of split — avoids pane pile-up
 		return m.openSelectedFlow(func(flow *model.Flow) tea.Cmd {
 			detail := NewDetailModel(flow, m.width, m.height)
-			pane := m.ws.SplitHSplit(&detailView{
+			return m.openFloating(&detailView{
 				DetailModel: &detail,
 				id:          m.nextViewID("detail"),
 			})
-			return pane.View.Init()
 		})
 	case key.Matches(v, key.NewBinding(key.WithKeys("r"))):
 		return m.openSelectedFlow(func(flow *model.Flow) tea.Cmd {
 			repeater := NewRepeaterModel(flow, m.width, m.height)
-			pane := m.ws.SplitHSplit(&repeaterView{
+			return m.openFloating(&repeaterView{
 				RepeaterModel: &repeater,
 				id:            m.nextViewID("repeater"),
 			})
-			return pane.View.Init()
 		})
 	case key.Matches(v, key.NewBinding(key.WithKeys("s"))):
 		// Toggle the selected flow's host scope from history.
@@ -571,8 +879,26 @@ func (m *AppModel) handleHistoryKey(v tea.KeyPressMsg) (bool, tea.Cmd) {
 		focused := m.ws.FocusedPane()
 		if history, ok := focused.View.(*HistoryModel); ok {
 			history.scopeFilter = !history.scopeFilter
-			history.rebuildRows()
+			history.applyFilter()
 		}
+		return true, nil
+
+	case key.Matches(v, key.NewBinding(key.WithKeys("p"))):
+		// Open preset picker overlay in the focused history pane.
+		focused := m.ws.FocusedPane()
+		if history, ok := focused.View.(*HistoryModel); ok {
+			history.OpenPresetPicker()
+		}
+		return true, nil
+
+	case key.Matches(v, key.NewBinding(key.WithKeys("C"))):
+		// C: clear screen (display only, DB kept).
+		m.clearAllHistoryScreens()
+		return true, nil
+
+	case key.Matches(v, key.NewBinding(key.WithKeys("D"))):
+		// D: wipe persisted history (DB + screen) with confirm.
+		m.confirmWipe = true
 		return true, nil
 
 	}
@@ -608,7 +934,7 @@ func (m *AppModel) openScopePane() tea.Cmd {
 }
 
 func (m *AppModel) openReconPane() tea.Cmd {
-	reconModel := NewReconModel(m.reconMgr, m.llmAnalyzer, m.scopeMgr, m.width, m.height)
+	reconModel := NewReconModel(m.reconMgr, m.scopeMgr, m.width, m.height)
 	pane := m.ws.SplitHSplit(&reconView{
 		ReconModel: &reconModel,
 		id:         m.nextViewID("recon"),
@@ -662,23 +988,153 @@ func filterReconInScope(s *recon.ReconSummary, sc *scope.Manager) *recon.ReconSu
 	return &filtered
 }
 
-// buildBulkContext converts a bulk analysis result into LLM conversation
-// context for subsequent single-flow analysis.
-func buildBulkContext(result *llm.BulkAnalysisResult) []llm.Message {
-	if result == nil {
-		return nil
+
+func (m *AppModel) ensureProjectStore() {
+	if m.projectStore == nil {
+		ps, _ := project.NewStore("")
+		m.projectStore = ps
 	}
+}
+
+func (m *AppModel) openProjectPicker() {
+	if m.projectStore == nil {
+		return
+	}
+	names, _ := m.projectStore.List()
+	m.projectList = names
+	m.projectCursor = 0
+	// Pre-select active project.
+	for i, n := range names {
+		if n == m.activeProject {
+			m.projectCursor = i
+			break
+		}
+	}
+	m.projectPicker = true
+}
+
+func (m *AppModel) handleProjectPickerKey(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch v.String() {
+	case "esc", "q", "P":
+		m.projectPicker = false
+		return m, nil
+	case "j", "down":
+		if m.projectCursor < len(m.projectList)-1 {
+			m.projectCursor++
+		}
+		return m, nil
+	case "k", "up":
+		if m.projectCursor > 0 {
+			m.projectCursor--
+		}
+		return m, nil
+	case "enter", " ":
+		if len(m.projectList) == 0 {
+			m.projectPicker = false
+			return m, nil
+		}
+		name := m.projectList[m.projectCursor]
+		m.projectPicker = false
+		rules, err := m.projectStore.Load(name)
+		if err != nil {
+			return m, nil
+		}
+		m.scopeMgr.ReplaceRules(rules)
+		m.activeProject = name
+		for _, p := range m.ws.Layout().Panes() {
+			if sv, ok := p.View.(*scopeView); ok {
+				sv.ScopeModel.rules = m.scopeMgr.Rules()
+				sv.ScopeModel.refreshTable()
+			}
+		}
+		// Re-evaluate scope badges in any history pane.
+		for _, p := range m.ws.Layout().Panes() {
+			if h, ok := p.View.(*HistoryModel); ok {
+				h.RefreshScopeBadges(m.scopeMgr)
+			}
+		}
+		return m, nil
+	case "n", "N":
+		// Quick-create from picker.
+		m.projectPicker = false
+		m.creatingProject = true
+		m.newProjectInput = textinput.New()
+		m.newProjectInput.Prompt = ""
+		m.newProjectInput.Placeholder = "new project name"
+		m.newProjectInput.Focus()
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+func (m *AppModel) handleNewProjectKey(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(v, key.NewBinding(key.WithKeys("esc"))):
+		m.creatingProject = false
+		m.newProjectInput.Blur()
+		return m, nil
+	case key.Matches(v, key.NewBinding(key.WithKeys("enter"))):
+		name := strings.TrimSpace(m.newProjectInput.Value())
+		m.creatingProject = false
+		m.newProjectInput.Blur()
+		if name == "" {
+			return m, nil
+		}
+		m.ensureProjectStore()
+		rules := m.scopeMgr.Rules()
+		_ = m.projectStore.Save(name, rules)
+		m.activeProject = name
+		// New project = clean slate: clear history display (screen only, DB kept).
+		m.clearAllHistoryScreens()
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.newProjectInput, cmd = m.newProjectInput.Update(v)
+		return m, cmd
+	}
+}
+
+func (m *AppModel) clearAllHistoryScreens() {
+	if m.ws == nil {
+		return
+	}
+	for _, p := range m.ws.Layout().Panes() {
+		if h, ok := p.View.(*HistoryModel); ok {
+			h.ClearScreen()
+		}
+	}
+}
+
+func (m *AppModel) wipeAllHistory() {
+	if m.store != nil {
+		_ = m.store.ClearFlows(context.Background())
+	}
+	m.clearAllHistoryScreens()
+}
+
+func (m *AppModel) handleConfirmWipeKey(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch v.String() {
+	case "y", "Y", "enter":
+		m.confirmWipe = false
+		m.wipeAllHistory()
+		return m, nil
+	case "n", "N", "esc", "q":
+		m.confirmWipe = false
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m AppModel) renderConfirmWipe() string {
 	var b strings.Builder
-	b.WriteString("Prior bulk traffic analysis:\n")
-	b.WriteString("Summary: " + result.Summary + "\n")
-	for _, f := range result.Findings {
-		b.WriteString(fmt.Sprintf("- flow %s [%s] %s: %s\n", f.FlowID, f.Severity, f.Title, f.Why))
-	}
-	b.WriteString("\nUse this context when analyzing individual flows.\n")
-	return []llm.Message{
-		{Role: llm.RoleUser, Content: b.String()},
-		{Role: llm.RoleAssistant, Content: "Understood. I will consider this traffic context when analyzing subsequent flows."},
-	}
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colRed)).Render("  ⚠  Wipe all HTTP history?")
+	b.WriteString("\n" + title + "\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render("  This deletes ALL flows + analyses from SQLite (persistent)."))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render("  Use C (clear) for screen-only instead."))
+	b.WriteString("\n\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render("  y: confirm wipe   n/esc: cancel"))
+	return b.String()
 }
 
 func (m AppModel) View() tea.View {
@@ -687,17 +1143,38 @@ func (m AppModel) View() tea.View {
 	}
 
 	var statusBar string
+	parts := []string{}
 	if m.activeProject != "" {
-		statusBar = fmt.Sprintf(" project: %s", m.activeProject)
+		parts = append(parts, fmt.Sprintf("project: %s", m.activeProject))
+	}
+	if m.interceptEnabled {
+		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color(colRed)).Bold(true).Render("● INTERCEPT ON"))
+	} else {
+		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render("intercept: off (I)"))
+	}
+	if len(parts) > 0 {
+		statusBar = " " + strings.Join(parts, " | ")
+	}
+
+	// Wipe confirm takes highest priority.
+	if m.confirmWipe {
+		return tea.View{Content: m.renderConfirmWipe(), AltScreen: true}
+	}
+
+	// Project picker / new-project overlays render full-screen.
+	if m.projectPicker {
+		return tea.View{Content: m.renderProjectPicker(), AltScreen: true}
+	}
+	if m.creatingProject {
+		return tea.View{Content: m.renderNewProjectPrompt(), AltScreen: true}
 	}
 
 	if m.ws != nil {
 		content := m.ws.View()
 		if m.commandMode {
-			// Overlay command bar at the very bottom, replacing the status bar.
 			lines := strings.Split(content, "\n")
 			if len(lines) > 0 {
-				lines = lines[:len(lines)-1] // drop status bar
+				lines = lines[:len(lines)-1]
 			}
 			cmdBar := lipgloss.NewStyle().
 				Width(m.width).
@@ -707,7 +1184,6 @@ func (m AppModel) View() tea.View {
 			lines = append(lines, cmdBar)
 			content = strings.Join(lines, "\n")
 		} else if statusBar != "" {
-			// Inject project name into status bar.
 			lines := strings.Split(content, "\n")
 			if len(lines) > 0 {
 				last := lines[len(lines)-1]
@@ -716,6 +1192,53 @@ func (m AppModel) View() tea.View {
 				}
 			}
 			content = strings.Join(lines, "\n")
+		}
+		// Floating intercept editor overlays everything (centered modal).
+		if m.floating != nil {
+			// Render floating as centered bordered box over dimmed base.
+			fw := int(float64(m.width) * 0.84)
+			fh := int(float64(m.height) * 0.86)
+			if fw < 40 {
+				fw = m.width - 4
+			}
+			if fh < 10 {
+				fh = m.height - 4
+			}
+			floatingContent := m.floating.View()
+			box := lipgloss.NewStyle().
+				Width(fw).
+				Height(fh).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color(colAccent)).
+				Render(floatingContent)
+			overlay := lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
+			// Merge base content area (above help/status) with overlay.
+			parts := strings.Split(content, "\n")
+			helpAndStatus := ""
+			if len(parts) >= 2 {
+				helpAndStatus = "\n" + parts[len(parts)-2] + "\n" + parts[len(parts)-1]
+				parts = parts[:len(parts)-2]
+			}
+			baseArea := strings.Join(parts, "\n")
+			oLines := strings.Split(overlay, "\n")
+			bLines := strings.Split(baseArea, "\n")
+			maxH := max(len(bLines), len(oLines))
+			var merged []string
+			for i := 0; i < maxH; i++ {
+				var bl, ol string
+				if i < len(bLines) {
+					bl = bLines[i]
+				}
+				if i < len(oLines) {
+					ol = oLines[i]
+				}
+				if strings.TrimSpace(ol) == "" {
+					merged = append(merged, bl)
+				} else {
+					merged = append(merged, ol)
+				}
+			}
+			content = strings.Join(merged, "\n") + helpAndStatus
 		}
 		return tea.View{Content: content, AltScreen: true}
 	}
@@ -726,6 +1249,44 @@ func (m AppModel) View() tea.View {
 	}
 
 	return tea.View{Content: "Ouroboros — 0: History  4: Scope  5: Recon  : :command", AltScreen: true}
+}
+
+func (m AppModel) renderProjectPicker() string {
+	var b strings.Builder
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colAccent)).Render("  Projects  ")
+	sub := lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render(fmt.Sprintf("(%d saved)", len(m.projectList)))
+	b.WriteString("\n" + title + sub + "\n\n")
+	if len(m.projectList) == 0 {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render("  No projects yet. Press n to create one."))
+		b.WriteString("\n")
+	} else {
+		for i, name := range m.projectList {
+			cursor := "  "
+			if i == m.projectCursor {
+				cursor = lipgloss.NewStyle().Foreground(lipgloss.Color(colAccent)).Render("▶ ")
+			}
+			mark := ""
+			if name == m.activeProject {
+				mark = lipgloss.NewStyle().Foreground(lipgloss.Color(colGreen)).Render("  ● active")
+			}
+			style := lipgloss.NewStyle()
+			if i == m.projectCursor {
+				style = style.Bold(true).Foreground(lipgloss.Color("255"))
+			}
+			b.WriteString(cursor + style.Render(name) + mark + "\n")
+		}
+	}
+	b.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render("  j/k: move  enter: open  n: new  esc: cancel"))
+	return b.String()
+}
+
+func (m AppModel) renderNewProjectPrompt() string {
+	var b strings.Builder
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colAccent)).Render("  New Project")
+	b.WriteString("\n" + title + "\n\n")
+	b.WriteString("  Name: " + m.newProjectInput.View() + "\n")
+	b.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render("  enter: save  esc: cancel"))
+	return b.String()
 }
 
 // NewAppModel creates a new AppModel.

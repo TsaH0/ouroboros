@@ -15,7 +15,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"ouroboros/internal/intercept"
-	"ouroboros/internal/llm"
 	"ouroboros/internal/proxy"
 	"ouroboros/internal/recon"
 	"ouroboros/internal/recon/providers/gau"
@@ -31,10 +30,6 @@ import (
 func main() {
 	installCA := flag.Bool("install-ca", false, "Print the CA certificate for browser installation")
 	proxyAddr := flag.String("proxy-addr", ":8080", "Proxy listen address")
-	providerType := flag.String("provider", "", "LLM provider: openai, ollama, nvidia, or gemini (auto-detects when empty)")
-	apiBase := flag.String("api-base", "", "LLM API base URL (e.g. https://integrate.api.nvidia.com/v1)")
-	apiKey := flag.String("api-key", "", "LLM API key (defaults to $NVIDIA_API_KEY, $GEMINI_API_KEY, or $OPENAI_API_KEY)")
-	model := flag.String("model", "", "LLM model name (e.g. poolside/laguna-xs-2.1, gemini-2.5-flash)")
 	dbPath := flag.String("db", "", "SQLite database path (default: ~/.config/ouroboros/ouroboros.db)")
 	memory := flag.Bool("memory", false, "Use in-memory store instead of SQLite")
 	flag.Parse()
@@ -80,8 +75,19 @@ func main() {
 	if err := scopeMgr.Load(ctx); err != nil {
 		log.Printf("warning: load scope rules: %v", err)
 	}
-	// No default scope rules — start with an empty scope.
-	// The user adds hosts/domains explicitly via the Scope pane.
+	// Default wildcard scope: ensure '*' (all hosts) is in scope by default
+	// so all websites are in scope unless explicitly excluded.
+	if len(scopeMgr.Rules()) == 0 {
+		_, _ = scopeMgr.AddRule(ctx, scope.Rule{
+			Kind:      scope.RuleKindHost,
+			Pattern:   "*",
+			MatchMode: scope.MatchModeWildcard,
+			Action:    scope.ActionInclude,
+			Enabled:   true,
+			Priority:  0,
+			Note:      "Default wildcard scope (* all hosts)",
+		})
+	}
 
 	// Initialize intercept service (intercept nothing by default).
 	is := intercept.NewMatcher(nil)
@@ -117,58 +123,11 @@ func main() {
 	reconEngine := recon.NewEngine(reconCache, reconRunner, reconProviders)
 	app.SetReconEngine(reconEngine)
 
-	// Configure LLM provider.
-	providerName := *providerType
-	if providerName == "" {
-		switch {
-		case os.Getenv("NVIDIA_API_KEY") != "":
-			providerName = "nvidia"
-		case os.Getenv("GEMINI_API_KEY") != "":
-			providerName = "gemini"
-		case os.Getenv("OPENAI_API_KEY") != "":
-			providerName = "openai"
-		default:
-			providerName = "ollama"
-		}
-	}
-
-	pt := llm.ProviderOpenAI
-	switch providerName {
-	case "ollama":
-		pt = llm.ProviderOllama
-	case "nvidia":
-		pt = llm.ProviderOpenAI
-		if *apiBase == "" {
-			*apiBase = "https://integrate.api.nvidia.com/v1"
-		}
-		if *apiKey == "" {
-			*apiKey = os.Getenv("NVIDIA_API_KEY")
-		}
-		if *model == "" {
-			*model = "poolside/laguna-xs-2.1"
-		}
-	case "gemini":
-		pt = llm.ProviderGemini
-		if *apiKey == "" {
-			*apiKey = os.Getenv("GEMINI_API_KEY")
-		}
-		if *model == "" {
-			*model = "gemini-2.5-flash"
-		}
-	case "openai":
-		pt = llm.ProviderOpenAI
-	default:
-		log.Fatalf("unknown provider: %s (use openai, ollama, nvidia, or gemini)", providerName)
-	}
-
-	provider, modelName := llm.NewProvider(pt, *apiBase, *apiKey, *model)
-	if provider != nil {
-		analyzer := llm.NewAnalyzer(provider, modelName)
-		app.SetAnalyzer(analyzer)
-		log.Printf("LLM provider: %s, model: %s", providerName, modelName)
-	} else {
-		log.Println("no LLM provider configured (use --provider, --api-base, --api-key, --model)")
-	}
+	// LLM analysis is intentionally decoupled from the TUI.
+	// Use skills/ouroboros-advisor/scripts/query.sh (or the global skill) for
+	// AI-assisted traffic/recon triage:
+	//   bash skills/ouroboros-advisor/scripts/query.sh triage
+	//   bash skills/ouroboros-advisor/scripts/query.sh flow <id>
 
 	// Start proxy server.
 	proxyServer := &http.Server{

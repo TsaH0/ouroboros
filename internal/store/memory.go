@@ -19,6 +19,7 @@ type MemoryStore struct {
 	byID  map[string]*model.Flow
 
 	rules   []scope.Rule
+	presets []scope.Preset
 	recons  map[string]*recon.ReconSummary
 	reconBy map[string]*recon.ReconSummary // target → summary
 	techs   []recon.Technology
@@ -65,6 +66,28 @@ func (s *MemoryStore) ListFlows(_ context.Context) ([]*model.Flow, error) {
 	return result, nil
 }
 
+func (s *MemoryStore) DeleteFlow(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.byID, id)
+	filtered := make([]*model.Flow, 0, len(s.flows))
+	for _, f := range s.flows {
+		if f.ID != id {
+			filtered = append(filtered, f)
+		}
+	}
+	s.flows = filtered
+	return nil
+}
+
+func (s *MemoryStore) ClearFlows(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byID = make(map[string]*model.Flow)
+	s.flows = nil
+	return nil
+}
+
 // --- Scope rules ---
 
 func (s *MemoryStore) LoadScopeRules(_ context.Context) ([]scope.Rule, error) {
@@ -99,6 +122,54 @@ func (s *MemoryStore) DeleteScopeRule(_ context.Context, id string) error {
 	}
 	s.rules = filtered
 	return nil
+}
+
+// --- Scope presets ---
+
+func (s *MemoryStore) ListScopePresets(_ context.Context) ([]scope.Preset, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p := make([]scope.Preset, len(s.presets))
+	copy(p, s.presets)
+	return p, nil
+}
+
+func (s *MemoryStore) SaveScopePreset(_ context.Context, p *scope.Preset) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, existing := range s.presets {
+		if existing.ID == p.ID {
+			s.presets[i] = *p
+			return nil
+		}
+	}
+	s.presets = append(s.presets, *p)
+	return nil
+}
+
+func (s *MemoryStore) DeleteScopePreset(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := make([]scope.Preset, 0, len(s.presets))
+	for _, p := range s.presets {
+		if p.ID != id {
+			filtered = append(filtered, p)
+		}
+	}
+	s.presets = filtered
+	return nil
+}
+
+func (s *MemoryStore) LoadScopeRulesForPreset(_ context.Context, presetID string) ([]scope.Rule, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []scope.Rule
+	for _, r := range s.rules {
+		if r.PresetID == presetID {
+			result = append(result, r)
+		}
+	}
+	return result, nil
 }
 
 // --- Recon ---
