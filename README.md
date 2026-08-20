@@ -39,6 +39,12 @@ Ouroboros is a terminal-first HTTP security workbench — an intercepting proxy,
 Requires Go 1.25+.
 
 ```sh
+go install github.com/TsaH0/ouroboros/cmd/ouroboros@latest
+ouroboros
+```
+
+Or from source:
+```sh
 git clone https://github.com/TsaH0/ouroboros.git
 cd ouroboros
 make run

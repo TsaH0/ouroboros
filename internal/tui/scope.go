@@ -14,9 +14,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/msg"
-	"ouroboros/internal/scope"
-	"ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/msg"
+	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/store"
 )
 
 // ScopeModel is the TUI model for managing scope rules and named presets.
@@ -147,6 +147,25 @@ func (m ScopeModel) Init() tea.Cmd {
 
 func (m ScopeModel) Update(mgs tea.Msg) (ScopeModel, tea.Cmd) {
 	switch v := mgs.(type) {
+	case tea.PasteMsg:
+		// Bracketed paste (Shift+Ctrl+V, middle-click) — forward to focused input
+		if m.adding {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(mgs)
+			return m, cmd
+		}
+		if m.addingPreset {
+			var cmd tea.Cmd
+			m.presetInput, cmd = m.presetInput.Update(mgs)
+			return m, cmd
+		}
+		if m.searching {
+			var cmd tea.Cmd
+			m.search, cmd = m.search.Update(mgs)
+			m.refreshTable()
+			return m, cmd
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -606,7 +625,7 @@ func (m *ScopeModel) refreshTable() {
 func (m ScopeModel) View() tea.View {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
 		Width(m.width).Align(lipgloss.Center)
-	header := headerStyle.Render(" Ouroboros — Scope")
+	header := headerStyle.Render(" ◉ Ouroboros — Scope")
 
 	// Active preset name in header.
 	presetName := m.manager.ActivePresetName()

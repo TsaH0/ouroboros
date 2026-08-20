@@ -3,7 +3,7 @@ package intercept
 import (
 	"regexp"
 
-	"ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/model"
 )
 
 // Rule defines a single intercept matching rule.

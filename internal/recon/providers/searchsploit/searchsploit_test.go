@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/recon"
 )
 
 type fakeRunner struct {

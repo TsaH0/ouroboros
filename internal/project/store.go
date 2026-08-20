@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/scope"
 )
 
 // Store saves and loads named scope rule sets (projects) as JSON files

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/recon"
 )
 
 // Finding is a single security finding from LLM analysis.

@@ -7,9 +7,9 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/recon"
-	"ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/scope"
 )
 
 // MemoryStore is a concurrency-safe in-memory implementation of Store.

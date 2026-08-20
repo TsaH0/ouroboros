@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/scope"
-	"ouroboros/internal/store"
-	"ouroboros/internal/workspace"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/workspace"
 )
 
 func appKey(text string) tea.KeyPressMsg {

@@ -15,16 +15,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/intercept"
-	"ouroboros/internal/model"
-	"ouroboros/internal/msg"
-	"ouroboros/internal/project"
-	"ouroboros/internal/proxy"
-	"ouroboros/internal/recon"
-	"ouroboros/internal/repeater"
-	"ouroboros/internal/scope"
-	"ouroboros/internal/store"
-	"ouroboros/internal/workspace"
+	"github.com/TsaH0/ouroboros/internal/intercept"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/msg"
+	"github.com/TsaH0/ouroboros/internal/project"
+	"github.com/TsaH0/ouroboros/internal/proxy"
+	"github.com/TsaH0/ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/repeater"
+	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/workspace"
 )
 
 // AppModel is the top-level Bubble Tea model for the Ouroboros TUI.
@@ -85,6 +85,28 @@ func waitForReconProgress(ch <-chan recon.ProgressUpdate) tea.Cmd {
 func (m *AppModel) Update(mgs tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle application-level messages first.
 	switch v := mgs.(type) {
+	case tea.PasteMsg:
+		// Bracketed paste — route to focused input (scope, detail, repeater, command, new-project)
+		if m.floating != nil {
+			var cmd tea.Cmd
+			m.floating, cmd = m.floating.Update(mgs)
+			return m, cmd
+		}
+		if m.creatingProject {
+			var cmd tea.Cmd
+			m.newProjectInput, cmd = m.newProjectInput.Update(mgs)
+			return m, cmd
+		}
+		if m.commandMode {
+			var cmd tea.Cmd
+			m.commandInput, cmd = m.commandInput.Update(mgs)
+			return m, cmd
+		}
+		if m.ws != nil {
+			cmd := m.ws.Update(mgs)
+			return m, cmd
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -1248,7 +1270,10 @@ func (m AppModel) View() tea.View {
 		return tea.View{Content: m.history.View(), AltScreen: true}
 	}
 
-	return tea.View{Content: "Ouroboros — 0: History  4: Scope  5: Recon  : :command", AltScreen: true}
+	// Fallback splash with logo (no workspace/history)
+	splash := renderLogoBanner(max(40, m.width)) + "\n\n" +
+		lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Align(lipgloss.Center).Width(max(40, m.width)).Render("proxy: "+fmt.Sprintf("%d flows", 0))
+	return tea.View{Content: splash, AltScreen: true}
 }
 
 func (m AppModel) renderProjectPicker() string {

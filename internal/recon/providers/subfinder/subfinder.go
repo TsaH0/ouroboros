@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/recon"
 )
 
 // Provider implements recon.ReconProvider for the subfinder tool.

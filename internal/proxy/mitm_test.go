@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"ouroboros/internal/scope"
-	"ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/store"
 )
 
 func TestHTTPSMITMFramesBufferedResponse(t *testing.T) {

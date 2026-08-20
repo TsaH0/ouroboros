@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/repeater"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/repeater"
 )
 
 // RepeaterModel shows an editable request form and the replay response.
@@ -96,6 +96,11 @@ func (m RepeaterModel) Init() tea.Cmd {
 
 func (m RepeaterModel) Update(mgs tea.Msg) (RepeaterModel, tea.Cmd) {
 	switch v := mgs.(type) {
+	case tea.PasteMsg:
+		if m.editing {
+			return m.updateFocusedInput(mgs)
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -228,7 +233,7 @@ func (m RepeaterModel) View() tea.View {
 	if m.editing {
 		modeText = "INSERT"
 	}
-	header := headerStyle.Render(" Ouroboros — Repeater [" + modeText + "]")
+	header := headerStyle.Render(" ◉ Ouroboros — Repeater [" + modeText + "]")
 
 	tallArea := max(6, height-9)
 	headersHeight := clamp(tallArea/3, 5, max(5, tallArea-5))

@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/model"
 )
 
 func TestMatcher_NoRules(t *testing.T) {

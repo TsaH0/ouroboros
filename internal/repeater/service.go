@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"time"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/scope"
 )
 
 // ErrOutOfScope is returned when the target URL is not in scope.

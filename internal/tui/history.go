@@ -10,11 +10,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/msg"
-	"ouroboros/internal/scope"
-	"ouroboros/internal/store"
-	"ouroboros/internal/workspace"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/msg"
+	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/workspace"
 )
 
 // colour palette — keep consistent across panes
@@ -381,9 +381,11 @@ func (m *HistoryModel) renderHeaderBar() string {
 	total := len(m.allFlows)
 	shown := len(m.rows)
 
+	logoPart := renderLogoSmall() + lipgloss.NewStyle().Foreground(lipgloss.Color(colMuted)).Render(" │ ")
 	presetPart := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(colAccent)).Bold(true).
 		Render("⊙ " + m.activePreset)
+	presetPart = logoPart + presetPart
 
 	var filterPart string
 	if m.scopeFilter {

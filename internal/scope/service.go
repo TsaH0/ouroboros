@@ -3,7 +3,7 @@ package scope
 import (
 	"net/url"
 
-	"ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/model"
 )
 
 // Service is the public interface for scope evaluation.

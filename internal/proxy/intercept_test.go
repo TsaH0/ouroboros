@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"ouroboros/internal/intercept"
-	"ouroboros/internal/msg"
-	"ouroboros/internal/scope"
-	"ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/intercept"
+	"github.com/TsaH0/ouroboros/internal/msg"
+	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/store"
 )
 
 func TestInterceptForward(t *testing.T) {

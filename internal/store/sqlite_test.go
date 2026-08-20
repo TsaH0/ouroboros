@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/recon"
-	"ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/scope"
 )
 
 func TestSQLiteStore_CRUD(t *testing.T) {

@@ -3,7 +3,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"ouroboros/internal/workspace"
+	"github.com/TsaH0/ouroboros/internal/workspace"
 )
 
 // reconView wraps a ReconModel as a workspace.View.

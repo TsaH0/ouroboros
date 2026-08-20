@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"ouroboros/internal/recon"
-	"ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/store"
 )
 
 func TestAppReconTypingDoesNotBlock(t *testing.T) {

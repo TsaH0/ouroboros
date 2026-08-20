@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/model"
 )
 
 func TestMemoryStore_SaveAndGet(t *testing.T) {

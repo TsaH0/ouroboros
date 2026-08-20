@@ -14,17 +14,17 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"ouroboros/internal/intercept"
-	"ouroboros/internal/proxy"
-	"ouroboros/internal/recon"
-	"ouroboros/internal/recon/providers/gau"
-	"ouroboros/internal/recon/providers/searchsploit"
-	"ouroboros/internal/recon/providers/subfinder"
-	"ouroboros/internal/recon/providers/wayback"
-	"ouroboros/internal/recon/providers/whatweb"
-	"ouroboros/internal/scope"
-	"ouroboros/internal/store"
-	"ouroboros/internal/tui"
+	"github.com/TsaH0/ouroboros/internal/intercept"
+	"github.com/TsaH0/ouroboros/internal/proxy"
+	"github.com/TsaH0/ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/recon/providers/gau"
+	"github.com/TsaH0/ouroboros/internal/recon/providers/searchsploit"
+	"github.com/TsaH0/ouroboros/internal/recon/providers/subfinder"
+	"github.com/TsaH0/ouroboros/internal/recon/providers/wayback"
+	"github.com/TsaH0/ouroboros/internal/recon/providers/whatweb"
+	"github.com/TsaH0/ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/tui"
 )
 
 func main() {

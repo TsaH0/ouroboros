@@ -1,4 +1,4 @@
-module ouroboros
+module github.com/TsaH0/ouroboros
 
 go 1.26.5
 

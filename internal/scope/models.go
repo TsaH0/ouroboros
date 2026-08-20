@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/model"
 )
 
 // RuleKind classifies what part of a URL the rule matches against.

@@ -8,9 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/store"
-	"ouroboros/internal/workspace"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/store"
+	"github.com/TsaH0/ouroboros/internal/workspace"
 )
 
 // InterceptModel is a queue tab for paused/intercepted flows.

@@ -15,8 +15,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/msg"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/msg"
 )
 
 // DetailModel shows a single flow's request and response details.
@@ -101,6 +101,11 @@ func (m DetailModel) Init() tea.Cmd {
 
 func (m DetailModel) Update(mgs tea.Msg) (DetailModel, tea.Cmd) {
 	switch v := mgs.(type) {
+	case tea.PasteMsg:
+		if m.editing {
+			return m.updateEditInputs(mgs)
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -216,12 +221,12 @@ func (m DetailModel) updateEditInputs(mgs tea.Msg) (DetailModel, tea.Cmd) {
 func (m DetailModel) View() tea.View {
 	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).
 		Width(m.width).Align(lipgloss.Center).
-		Render(" Ouroboros — Flow Detail")
+		Render(" ◉ Ouroboros — Flow Detail")
 
 	if m.editing && m.isIntercepted() {
 		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).
 			Width(m.width).Align(lipgloss.Center).
-			Render(" Ouroboros — Intercept Edit [INSERT] ")
+			Render(" ◉ Ouroboros — Intercept Edit [INSERT] ")
 		labelStyle := lipgloss.NewStyle().Width(10)
 		activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 		contentWidth := max(20, m.width-4)

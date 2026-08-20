@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/model"
 )
 
 func TestHTTPService_Replay_Passthrough(t *testing.T) {

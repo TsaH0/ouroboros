@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/recon"
 )
 
 type mockProvider struct {

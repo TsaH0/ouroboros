@@ -8,8 +8,8 @@ import (
 	"charm.land/bubbletea/v2"
 	"github.com/oklog/ulid/v2"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/msg"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/msg"
 )
 
 // GenerateSyntheticFlow creates a randomized FlowCompleted event for demo purposes.

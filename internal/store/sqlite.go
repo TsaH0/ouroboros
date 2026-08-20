@@ -11,9 +11,9 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"ouroboros/internal/model"
-	"ouroboros/internal/recon"
-	"ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/model"
+	"github.com/TsaH0/ouroboros/internal/recon"
+	"github.com/TsaH0/ouroboros/internal/scope"
 )
 
 // SQLiteStore implements Store backed by a SQLite database with WAL mode.

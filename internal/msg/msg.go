@@ -1,6 +1,6 @@
 package msg
 
-import "ouroboros/internal/model"
+import "github.com/TsaH0/ouroboros/internal/model"
 
 // --- Events (dispatched from proxy/backend to TUI) ---
 

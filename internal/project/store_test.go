@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ouroboros/internal/scope"
+	"github.com/TsaH0/ouroboros/internal/scope"
 )
 
 func TestStoreSaveLoadList(t *testing.T) {
